@@ -1,0 +1,103 @@
+# =============================================================================
+# src/config/preprocessing.yaml — Preprocessing configuration
+# =============================================================================
+# Controls data contract enforcement AND transform policy during preprocessing.
+#
+# Per-dataset schema/constraints live in data/raw/<dataset>/dataset.yaml.
+# This file controls the GLOBAL transform policy applied to all datasets.
+#
+# DEFAULT BEHAVIOUR: all transforms disabled → identical to column_selection_only.
+# This guarantees backward compatibility with existing processed versions.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Data contract enforcement (applied to raw splits before any transform)
+# ---------------------------------------------------------------------------
+
+# Hard-fail if any feature column contains nulls when policy=fail (see below).
+fail_on_nulls: true
+
+# Minimum number of rows required in each split.
+min_rows: 10
+
+# Enforce that column dtypes match the declared schema types.
+validate_types: true
+
+# For classification: verify the target column only contains known label_classes.
+validate_labels: true
+
+# When true and a cache hit is detected, re-reads all splits and runs
+# validate_split_data() to confirm integrity. Safe but slow on large datasets.
+# When false, only checks that artefact files exist + hashes match (fast).
+# Recommended: false for development/large data, true for CI pipelines.
+validate_on_skip: false
+
+# ---------------------------------------------------------------------------
+# Feature type overrides
+# ---------------------------------------------------------------------------
+# Null (default) = auto-detect from dataset.yaml schema:
+#   float / int   -> numeric
+#   string / bool -> categorical
+# Explicit lists here OVERRIDE auto-detection entirely.
+# Every feature must appear in exactly one list.
+numeric_features: null
+categorical_features: null
+
+# ---------------------------------------------------------------------------
+# Encoding (categorical features)
+# ---------------------------------------------------------------------------
+encoding:
+  # false (default) = no encoding applied -> backward compatible with column_selection_only.
+  # true  = apply encoder to all categorical features.
+  enabled: false
+
+  # "onehot"   = OneHotEncoder (sparse_output=False, expands columns).
+  # "ordinal"  = OrdinalEncoder (preserves column count).
+  strategy: "onehot"
+
+  # "ignore" (recommended) = unknown categories at eval/test -> all-zero OHE row.
+  # "error"                = raise ValueError on any unseen category.
+  handle_unknown: "ignore"
+
+  # OHE only: drop categories seen fewer than N times in train.
+  # null = keep all categories.
+  min_frequency: null
+
+# ---------------------------------------------------------------------------
+# Scaling (numeric features)
+# ---------------------------------------------------------------------------
+scaling:
+  # false (default) = no scaling applied -> backward compatible.
+  # true  = apply scaler to all numeric features.
+  enabled: false
+
+  # "standard" = StandardScaler (zero mean, unit variance).
+  # "minmax"   = MinMaxScaler ([0, 1] range).
+  strategy: "standard"
+
+# ---------------------------------------------------------------------------
+# Missing-value policy
+# ---------------------------------------------------------------------------
+missing_values:
+  # "passthrough" (default) = NaN values pass through silently.
+  #   BACKWARD COMPATIBLE with column_selection_only behaviour.
+  #   Governance note: passthrough = legacy compatibility. fail = RECOMMENDED.
+  #   Use this only when migrating from the old pipeline or for legacy datasets.
+  #
+  # "fail"        = RECOMMENDED. Hard error if any NaN found in X after split load.
+  #   Catches data quality issues before they silently corrupt training.
+  #
+  # "impute"      = Fill NaN before encoding/scaling via SimpleImputer.
+  #   Requires numeric_strategy and categorical_strategy to be set.
+  policy: "passthrough"
+
+  # Used when policy=impute. Ignored otherwise.
+  # Numeric: "mean" | "median" | "constant"
+  numeric_strategy: "mean"
+
+  # Used when policy=impute. Ignored otherwise.
+  # Categorical: "most_frequent" | "constant"
+  categorical_strategy: "most_frequent"
+
+  # Used when numeric_strategy=constant or categorical_strategy=constant.
+  fill_value: null

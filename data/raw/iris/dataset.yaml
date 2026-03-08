@@ -1,0 +1,25 @@
+name: iris
+task_type: classification
+description: Iris flower dataset for classification of three species.
+source: scikit-learn
+created_at: '2026-02-21'
+features:
+- sepal_length_cm
+- sepal_width_cm
+- petal_length_cm
+- petal_width_cm
+target: species
+schema:
+  sepal_length_cm: float
+  sepal_width_cm: float
+  petal_length_cm: float
+  petal_width_cm: float
+  species: string
+
+constraints:
+  min_rows: 10
+  max_null_fraction: 0.0
+  label_classes:
+    - setosa
+    - versicolor
+    - virginica

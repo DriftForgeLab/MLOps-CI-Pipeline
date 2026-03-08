@@ -1,0 +1,151 @@
+# Data Module
+
+## Responsibility
+
+The `data` module handles everything related to raw dataset ingestion,
+versioning, validation, splitting, and preprocessing.
+
+It is the only module that:
+- Reads and writes files under `data/raw/` and `data/processed/`
+- Generates dataset metadata (`dataset.yaml`)
+- Computes deterministic version identifiers
+- Splits data into train/val/test sets
+- Preprocesses splits for use by training and evaluation
+
+---
+
+## Data Flow
+
+```
+data/raw/<dataset>/
+    data.csv                    ← source data
+    dataset.yaml                ← auto-generated metadata (or user-provided)
+          │
+          ▼  create_dataset_yaml.py + versioning.py
+data/processed/<dataset>/<version_id>/
+    data.csv                    ← full versioned copy
+    dataset.yaml                ← metadata with version_id and versioned_at
+          │
+          ▼  split.py
+    train/data.csv              ← 70% of rows
+    val/data.csv                ← 15% of rows
+    test/data.csv               ← 15% of rows
+          │
+          ▼  preprocess.py
+    preprocessed/
+        train.csv               ← feature columns + target column only
+        val.csv
+        test.csv
+```
+
+---
+
+## Files
+
+### `create_dataset_yaml.py`
+
+Auto-detects datasets in `data/raw/` that are missing a `dataset.yaml`
+and interactively generates one by inspecting the CSV columns.
+
+Called automatically at pipeline startup via `detect_and_generate()`.
+
+`detect_and_generate()` accepts a `non_interactive` flag. When `True` (set
+automatically in CI via `sys.stdin.isatty()`), it raises `RuntimeError` listing
+the affected datasets instead of hanging on `input()`. This prevents CI pipelines
+from stalling indefinitely waiting for keyboard input.
+
+The generated `dataset.yaml` includes a `constraints` block populated directly
+from the CSV: `min_rows`, `max_null_fraction`, and (for classification)
+`label_classes` — the list of valid labels read from the target column.
+This block is the data contract that `validate_split_data()` enforces on
+every subsequent pipeline run.
+
+---
+
+### `versioning.py`
+
+Creates a deterministic version of the dataset by computing a SHA-256
+hash of `data.csv`. The first 12 characters of the hash become the
+`version_id`, used as the directory name under `data/processed/`.
+
+Same data always produces the same version — reproducible by design.
+
+---
+
+### `validate.py`
+
+Two validation functions with distinct responsibilities:
+
+**`validate_dataset(dataset_name, version_id)`** — structural check. Runs before splitting.
+Verifies that required files exist (`data.csv`, `dataset.yaml`), required metadata fields
+are present, and CSV columns match the declared schema.
+
+**`validate_split_data(df, metadata, split_name)`** — data contract check. Runs per split
+*before* preprocessing transforms are applied. Checks:
+- Row count meets `constraints.min_rows`
+- Column dtypes match the declared schema types (via pandas `dtype.kind`)
+- Null fraction per column is within `constraints.max_null_fraction`
+- For classification: all labels exist in `constraints.label_classes`
+
+All violations are collected before raising a single `ValueError`, so you see every
+problem in one error message rather than one at a time.
+
+---
+
+### `split.py`
+
+Splits the versioned dataset into train, val, and test sets using
+`sklearn.model_selection.train_test_split` with the configured `random_seed`.
+
+Default ratios: 70% train / 15% val / 15% test.
+
+Split is idempotent — skipped if `train/`, `val/`, `test/` already exist.
+
+For classification tasks, `stratify=df[target]` is passed to both `train_test_split`
+calls so that class proportions are preserved in every split. Without stratification,
+small datasets risk having a class entirely absent from val or test.
+
+Split metadata (counts, ratios, seed) is written back to `dataset.yaml`. For
+classification, a `label_distribution` map (class → count per split) is also written.
+
+---
+
+### `preprocess.py`
+
+Selects the relevant columns from each split and writes ready-to-use
+CSVs to `preprocessed/` inside the version directory.
+
+Column definitions (`target`, `features`) are read from `dataset.yaml` —
+the single source of truth. No separate preprocessing config is needed.
+
+Two functions:
+- `preprocess(df, target, features)` — pure function, no I/O, returns a new DataFrame
+- `run_preprocessing(dataset_name, processed_dir)` — I/O boundary,
+  handles version discovery, idempotency check, validation, and stats collection
+
+**Hash-based idempotency**: `_compute_preprocess_hash()` computes a SHA-256
+fingerprint of `sorted(features) + target` as canonical JSON. The hash is stored
+in `preprocessed/metadata.json`. On re-run, if the hash matches, preprocessing
+is skipped. If features or target changed, it re-runs.
+
+**Validation before transform**: `validate_split_data()` is called per split
+*before* `preprocess()` runs, so contract violations are caught before any output
+is written to disk.
+
+**Observability**: `_compute_split_stats()` records per-split stats in `metadata.json`:
+`rows_out`, `null_counts`, `label_distribution` (classification only), and
+`feature_stats` (mean, std, min, max for numeric columns). These serve as the
+baseline for future drift detection.
+
+---
+
+## Design Principles
+
+- **Idempotency**: every operation checks before writing; safe to re-run.
+  Splitting uses file-existence checks; preprocessing uses hash-based fingerprinting.
+- **Determinism**: SHA-256 hashing and fixed random seeds ensure reproducibility
+- **Single source of truth**: `dataset.yaml` owns column definitions and data contracts;
+  nothing duplicates them
+- **Fail-fast data contracts**: `validate_split_data()` enforces dtype, null, label,
+  and row-count constraints before any transform runs
+- **Separation of raw and processed**: raw splits are never overwritten by preprocessing

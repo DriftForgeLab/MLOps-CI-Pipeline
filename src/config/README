@@ -1,0 +1,105 @@
+# Configuration Module
+
+## Responsibility
+
+The `config` module provides centralized configuration loading and validation.
+
+It is the only module that:
+- Reads YAML configuration files from disk
+- Parses raw YAML safely
+- Validates configuration structure
+- Constructs typed, immutable configuration objects
+
+All other modules receive an already validated `PipelineConfig` object.
+
+---
+
+## Design Principles
+
+- Fail-fast validation
+- Explicit required keys
+- Controlled allowed values (task type, log level)
+- Immutable configuration (`@dataclass(frozen=True)`)
+- Clear separation between parsing and usage
+
+The configuration module acts as the runtime configuration authority for the pipeline.
+
+---
+
+## Files
+
+### `pipeline.yaml`
+
+Top-level runtime configuration.
+
+Defines:
+- Project metadata (name, version)
+- Task type (`classification` or `regression`)
+- Random seed
+- Data directory paths
+- Sub-configuration paths
+- Logging level
+- Pipeline stages (ordered list: `preprocessing`, `training`, `evaluation`, `deployment`)
+- Output directory for pipeline artifacts
+
+This file determines pipeline runtime behavior.
+
+---
+
+### `loader.py`
+
+Core configuration loader and validator.
+
+Responsibilities:
+- Ensure file exists
+- Parse YAML using `yaml.safe_load`
+- Validate required top-level keys
+- Validate nested keys (`project`, `data`, `configs`)
+- Validate value constraints (task type, log level, seed type)
+- Build structured `PipelineConfig` object
+
+Validation currently includes:
+- Required key checks
+- Enum validation (task type, log level)
+- Basic type validation (e.g., random_seed is int)
+- Pipeline stages validation (must be list, non-empty, valid stage names)
+- Output directory type validation
+- Required `configs` sub-keys: `preprocessing`, `training`, `evaluation`, `deployment`
+
+---
+
+### `preprocessing.yaml`
+
+Global preprocessing constraints applied on every pipeline run.
+
+| Key                | Type    | Description                                              |
+|--------------------|---------|----------------------------------------------------------|
+| `fail_on_nulls`    | bool    | Hard-fail if any feature column contains nulls           |
+| `min_rows`         | int     | Minimum rows required in each split                      |
+| `validate_types`   | bool    | Enforce that column dtypes match the declared schema     |
+| `validate_labels`  | bool    | Verify target column only contains declared label values |
+
+Per-dataset overrides (`label_classes`, `max_null_fraction`) live in
+`data/raw/<dataset>/dataset.yaml` under the `constraints` key.
+
+---
+
+### `training.yaml`
+
+Reserved for training-specific parameters.
+Used by the training module in later stages.
+
+---
+
+### `evaluation.yaml`
+
+Reserved for evaluation-specific parameters.
+Used by evaluation logic in later stages.
+
+---
+
+### `deployment.yaml`
+
+Reserved for deployment-specific parameters.
+Used by deployment and serving components in later stages.
+

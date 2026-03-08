@@ -1,0 +1,34 @@
+# =============================================================================
+# src/config/promotion.yaml — Promotion rule engine configuration
+# =============================================================================
+# Defines minimum thresholds a candidate model must meet before promotion.
+# All rules are evaluated deterministically — any violation hard-fails the pipeline.
+# =============================================================================
+
+classification:
+  rules:
+    - id: "min_accuracy"
+      metric: "accuracy"
+      threshold: 0.80
+      operator: ">="
+      description: "Model accuracy must be at least 80%"
+
+    - id: "min_f1"
+      metric: "f1_score"
+      threshold: 0.75
+      operator: ">="
+      description: "Weighted F1-score must be at least 75%"
+
+regression:
+  rules:
+    - id: "min_r2"
+      metric: "r2"
+      threshold: 0.70
+      operator: ">="
+      description: "R² must be at least 0.70"
+
+    - id: "max_mae"
+      metric: "mae"
+      threshold: 1.0
+      operator: "<="
+      description: "MAE must not exceed 1.0"

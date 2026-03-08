@@ -1,0 +1,8 @@
+# =============================================================================
+# src/config/evaluation.yaml — Evaluation configuration
+# =============================================================================
+classification:
+  averaging: "weighted"   # options: weighted, macro, binary
+
+regression:
+  # no extra config needed for now

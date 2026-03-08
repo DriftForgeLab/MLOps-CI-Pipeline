@@ -1,0 +1,161 @@
+# Pipeline Module
+
+## Responsibility
+
+The `pipeline` module defines the orchestration boundary of the MLOps system.
+
+It is responsible for:
+- Acting as the single CLI entrypoint to the system
+- Parsing command-line arguments
+- Loading and validating configuration
+- Initializing logging
+- Executing pipeline stages defined in configuration
+- Generating a traceable run report after each execution
+
+It is NOT responsible for:
+- Model training logic
+- Evaluation logic
+- Drift detection logic
+- Deployment logic
+- Registry or lifecycle logic
+
+All business logic is delegated to dedicated modules.
+
+---
+
+## Current Scope
+
+At this stage, the pipeline:
+- Parses CLI arguments
+- Loads and validates the configuration
+- Sets up logging
+- Ingests, versions, validates, and splits the dataset
+- Runs configured `pipeline_stages` in order with START/END markers
+- Stops execution on first stage failure (fail-fast)
+- Writes `run_report.json` to the configured `output_dir` after every run (success or failure)
+- Exits with code 0 (success) or 1 (failure)
+
+The `preprocessing` stage is fully implemented. The `training`, `evaluation`,
+and `deployment` stages are placeholders (no-ops) to be implemented in later sprints.
+
+---
+
+## Files
+
+### `run_pipeline.py`
+
+Main CLI entrypoint. Coordinates the full pipeline execution flow.
+
+Responsibilities:
+- Parse `--config` argument
+- Resolve config path
+- Call `load_config()` from `config.loader`
+- Handle validation and YAML errors
+- Initialize logging
+- Compute config hash via `report.compute_config_hash()`
+- Iterate `config.pipeline_stages` and call `steps.execute_stage()` per stage
+- Collect `StageResult` objects and abort on first failure
+- Build and write run report via `report.build_run_report()` and `report.write_run_report()`
+- Exit with appropriate code based on stage outcomes
+
+Design principles:
+- Must remain thin — coordinates, does not contain business logic
+- Delegates stage execution to `steps.py`
+- Delegates report generation to `report.py`
+- Unpacks `PipelineConfig` into primitive values before passing to report module
+
+Registered via:
+`pyproject.toml` → `[project.scripts]`
+
+---
+
+### `steps.py`
+
+Pipeline stage execution with structured logging and timing.
+
+Responsibilities:
+- Define `StageResult` dataclass capturing stage name, status, timestamps, duration, and error
+- Maintain `_STAGE_REGISTRY` mapping stage names to callable functions
+- Execute individual stages via `execute_stage()` with START/END log markers
+- Catch and record stage failures without crashing the pipeline
+- Return a `StageResult` for every execution attempt (success or failure)
+
+Design principles:
+- Registry-based dispatch — new stages are added by changing a dict value, not by modifying `execute_stage()`
+- START/END markers are always paired, even on failure
+- `KeyError` for unknown stages propagates (programming error), all other exceptions are caught and recorded
+- `StageResult` is a dataclass (not frozen) because it is built incrementally during execution
+
+Registered stages:
+
+| Stage             | Function              | Status                                            |
+|---|---|---|
+| `preprocessing`   | `_preprocessing_stage`| Implemented — delegates to `src.data.preprocess`  |
+| `training`        | `_placeholder_stage`  | No-op                                             |
+| `evaluation`      | `_placeholder_stage`  | No-op                                             |
+| `deployment`      | `_placeholder_stage`  | No-op                                             |
+
+Extension point for later sprints:
+```python
+from src.training.classification.train import run_training
+_STAGE_REGISTRY["training"] = run_training
+```
+
+---
+
+### `report.py`
+
+Run report generation and persistence.
+
+Responsibilities:
+- Compute a deterministic SHA-256 hash of the raw config file (`compute_config_hash()`)
+- Build the run report dict from primitive values and stage results (`build_run_report()`)
+- Write `run_report.json` to the output directory (`write_run_report()`)
+
+Design principles:
+- `build_run_report()` is a pure function — no I/O, no logging, no side effects, easily unit-tested
+- `write_run_report()` is the single I/O boundary — creates directories, writes JSON, logs the path
+- Takes primitive arguments (strings, ints), not `PipelineConfig` — loose coupling to config module
+- Uses `dataclasses.asdict()` to convert `StageResult` objects — automatically captures new fields
+
+Report schema (`run_report.json`):
+```json
+{
+    "project_id": "lightweight-mlops-pipeline-v0.1.0",
+    "config_hash": "sha256:...",
+    "timestamp": "2026-02-20T14:30:00.123456+00:00",
+    "task_type": "classification",
+    "random_seed": 42,
+    "executed_stages": [
+        {
+            "stage": "training",
+            "status": "completed",
+            "started_at": "...",
+            "ended_at": "...",
+            "duration_seconds": 0.001,
+            "error": null
+        }
+    ],
+    "overall_status": "completed"
+}
+```
+
+---
+
+## Module Dependencies
+
+```
+run_pipeline.py
+    ├── src.config.loader    (load_config, PipelineConfig)
+    ├── src.pipeline.steps   (execute_stage, StageResult)
+    └── src.pipeline.report  (compute_config_hash, build_run_report, write_run_report)
+
+steps.py
+    ├── src.config.loader    (PipelineConfig — type hint only)
+    └── src.data.preprocess  (run_preprocessing — called by _preprocessing_stage)
+
+report.py
+    └── src.pipeline.steps   (StageResult — type only, used with asdict())
+```
+
+All dependencies are one-directional. No circular imports.

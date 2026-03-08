@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lightweight-mlops-pipeline"
+version = "0.1.0"
+description = "Lightweight drift-aware MLOps pipeline for controlled retraining and deployment."
+requires-python = ">=3.12,<3.13"
+
+dependencies = [
+    "setuptools>=68,<81",
+    "numpy==1.26.4",
+    "pandas==2.2.1",
+    "scikit-learn==1.4.2",
+    "mlflow==2.11.3",
+    "fastapi==0.110.0",
+    "uvicorn==0.29.0",
+    "evidently==0.4.21",
+    "pyyaml==6.0.1"
+]
+
+[project.scripts] # Here you can define command-line scripts for running the pipeline and API
+#Example:
+run-pipeline = "src.pipeline.run_pipeline:main"
+#run-api = "src.deployment.app:main" Can be activated in later sprint
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]

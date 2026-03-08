@@ -1,0 +1,35 @@
+name: CI Pipeline
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e . pytest
+
+      - name: Run tests
+        run: pytest tests/ -v --tb=short
+
+      - name: Run pipeline
+        run: run-pipeline --config src/config/pipeline.yaml
+
+      - name: Print run report
+        run: cat outputs/run_report.json
+
+      - name: Upload run report
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-report
+          path: outputs/run_report.json

@@ -1,0 +1,36 @@
+project:
+  name: "lightweight-mlops-pipeline"
+  version: "0.1.0"
+
+task_type: "classification"
+
+random_seed: 42
+
+pipeline_stages:
+  - "preprocessing"
+  - "training"
+  - "evaluation"
+  - "promotion"
+
+output_dir: "outputs"
+
+dataset: iris
+
+data:
+  raw: "data/raw"
+  processed: "data/processed"
+  evaluation: "data/evaluation"
+  drift_scenarios: "data/drift_scenarios"
+
+configs:
+  preprocessing: "src/config/preprocessing.yaml"
+  training: "src/config/training_classification.yaml"
+  evaluation: "src/config/evaluation.yaml"
+  deployment: "src/config/deployment.yaml"
+  promotion: "src/config/promotion.yaml"
+
+log_level: "INFO"
+
+mlflow:
+  tracking_uri: null        # env var MLFLOW_TRACKING_URI used if null; null = local mlruns/
+  experiment_name: null     # defaults to project.name if null
