@@ -22,29 +22,29 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-VALID_TASK_TYPES: set[str] = {"classification", "regression"} #!!! May need to update VALIDATE and REQUIRED to ENUM in later sprints
-VALID_LOG_LEVELS: set[str] = {"DEBUG", "INFO", "WARNING", "ERROR"}
-VALID_PIPELINE_STAGES: set[str] = {"preprocessing", "training", "evaluation", "deployment", "promotion"} #!!! May need to update the validation of Deploymeny in later sprints
-VALID_ALGORITHMS: set[str] = {"random_forest", "logistic_regression", "linear_regression"}
-VALID_SOLVERS: set[str] = {"lbfgs", "saga", "liblinear"}
-VALID_CLASS_WEIGHTS: set[str] = {"balanced"} ## May need other weights later
+VALID_TASK_TYPES: frozenset[str] = {"classification", "regression"} #!!! May need to update VALIDATE and REQUIRED to ENUM in later sprints
+VALID_LOG_LEVELS: frozenset[str] = {"DEBUG", "INFO", "WARNING", "ERROR"}
+VALID_PIPELINE_STAGES: frozenset[str] = {"preprocessing", "training", "evaluation", "deployment", "promotion"} #!!! May need to update the validation of Deploymeny in later sprints
+VALID_ALGORITHMS: frozenset[str] = {"random_forest", "logistic_regression", "linear_regression"}
+VALID_SOLVERS: frozenset[str] = {"lbfgs", "saga", "liblinear"}
+VALID_CLASS_WEIGHTS: frozenset[str] = {"balanced"} ## May need other weights later
 
-REQUIRED_MODEL_KEYS: set[str] = {"algorithm", "hyperparameters"}
-RF_HYPERPARAMS_KEYS: set[str] = {"n_estimators", "max_depth", "min_samples_split", "class_weight"}
-LR_HYPERPARAMS_KEYS: set[str] = {"C", "solver", "max_iter", "class_weight"}
+REQUIRED_MODEL_KEYS: frozenset[str] = {"algorithm", "hyperparameters"}
+RF_HYPERPARAMS_KEYS: frozenset[str] = {"n_estimators", "max_depth", "min_samples_split", "class_weight"}
+LR_HYPERPARAMS_KEYS: frozenset[str] = {"C", "solver", "max_iter", "class_weight"}
 
-REQUIRED_TOP_LEVEL_KEYS: set[str] = {"project", "task_type", "random_seed", "pipeline_stages", "output_dir", "data", "configs", "log_level", "dataset"}
+REQUIRED_TOP_LEVEL_KEYS: frozenset[str] = {"project", "task_type", "random_seed", "pipeline_stages", "output_dir", "data", "configs", "log_level", "dataset"}
 
 # Preprocessing config validation constants
-VALID_ENCODING_STRATEGIES: set[str] = {"onehot", "ordinal"}
-VALID_HANDLE_UNKNOWN: set[str] = {"ignore", "error"}
-VALID_SCALING_STRATEGIES: set[str] = {"standard", "minmax"}
-VALID_MISSING_POLICIES: set[str] = {"passthrough", "fail", "impute"}
-VALID_NUMERIC_IMPUTE_STRATEGIES: set[str] = {"mean", "median", "constant"}
-VALID_CATEGORICAL_IMPUTE_STRATEGIES: set[str] = {"most_frequent", "constant"}
-REQUIRED_PROJECT_KEYS: set[str] = {"name", "version"}
-REQUIRED_DATA_KEYS: set[str] = {"raw", "processed", "evaluation", "drift_scenarios"}
-REQUIRED_CONFIGS_KEYS: set[str] = {"preprocessing", "training", "evaluation", "deployment", "promotion"}
+VALID_ENCODING_STRATEGIES: frozenset[str] = {"onehot", "ordinal"}
+VALID_HANDLE_UNKNOWN: frozenset[str] = {"ignore", "error"}
+VALID_SCALING_STRATEGIES: frozenset[str] = {"standard", "minmax"}
+VALID_MISSING_POLICIES: frozenset[str] = {"passthrough", "fail", "impute"}
+VALID_NUMERIC_IMPUTE_STRATEGIES: frozenset[str] = {"mean", "median", "constant"}
+VALID_CATEGORICAL_IMPUTE_STRATEGIES: frozenset[str] = {"most_frequent", "constant"}
+REQUIRED_PROJECT_KEYS: frozenset[str] = {"name", "version"}
+REQUIRED_DATA_KEYS: frozenset[str] = {"raw", "processed", "evaluation", "drift_scenarios"}
+REQUIRED_CONFIGS_KEYS: frozenset[str] = {"preprocessing", "training", "evaluation", "deployment", "promotion"}
 
 # frozen=True because the pipeline must be reproducible. Immutability prevents
 # any module from accidentally mutating config during execution, which would
@@ -140,6 +140,7 @@ class PreprocessingConfig:
 class MLflowConfig:
     tracking_uri: str | None = None
     experiment_name: str | None = None
+    registry_model_name: str | None = None
 
 @dataclass(frozen=True)
 class PipelineConfig:
@@ -164,7 +165,7 @@ class PipelineConfig:
 class ClassificationEvalConfig:
     averaging: str = "weighted"
 
-@dataclass(frozen=True)
+@dataclass(frozen=True) ### This dataclass is currently empty
 class RegressionEvalConfig:
     pass
 
@@ -405,9 +406,18 @@ def _build_config(raw: dict) -> PipelineConfig:
     It performs pure mapping from dict keys to dataclass fields.
     """
     mlflow_raw = raw.get("mlflow") or {}
+    registry_model_name = mlflow_raw.get("registry_model_name")
+    if registry_model_name is not None and (
+        not isinstance(registry_model_name, str) or not registry_model_name.strip()
+    ):
+        raise ValueError(
+            "mlflow.registry_model_name must be a non-empty string if provided, "
+            f"got {registry_model_name!r}"
+        )
     mlflow_cfg = MLflowConfig(
         tracking_uri=mlflow_raw.get("tracking_uri"),
         experiment_name=mlflow_raw.get("experiment_name"),
+        registry_model_name=registry_model_name,
     )
 
     return PipelineConfig(

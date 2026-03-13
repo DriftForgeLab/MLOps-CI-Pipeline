@@ -37,6 +37,7 @@ from src.pipeline.mlflow_logger import (
 
 from src.promotion.rules import run_promotion_rules
 from src.promotion.approval import request_approval
+from src.registry.model_registry import PROMOTION_ARTIFACT_SUBDIR
 import json
 import mlflow
 
@@ -156,14 +157,27 @@ def _promotion_stage(config: PipelineConfig, version_id: str) -> None:
     log_promotion_decision_to_mlflow(decision)
 
     if mlflow.active_run():
-        mlflow.log_artifact(str(decision_path), artifact_path="promotion")
+        mlflow.log_artifact(str(decision_path), artifact_path=PROMOTION_ARTIFACT_SUBDIR)
 
     if not result.approved:
         reason_msg = f" Reason: {result.reason}" if result.reason else " No reason provided."
         raise ValueError(f"Promotion rejected by user.{reason_msg}")
 
-    # Production model registration deferred to ID 9 (MLflow Model Registry).
-    # ID 9 will register approved models in MLflow and manage production state. (remove comments when done)
+    # Register and promote the approved model in MLflow Model Registry (ID 9)
+    try:
+        from src.registry.model_registry import (
+            register_approved_model,
+            promote_to_production,
+            attach_lineage_tags,
+            get_mlflow_client,
+        )
+        model_version = register_approved_model(config, mlflow_run_id)
+        promote_to_production(config, model_version.version, mlflow_run_id)
+        client = get_mlflow_client(config)
+        run = client.get_run(mlflow_run_id)
+        attach_lineage_tags(config, model_version.version, run, report, decision)
+    except Exception as e:
+        logger.error("Model Registry integration failed (non-fatal): %s", e)
 
 
 _STAGE_REGISTRY: dict[str, callable] = {

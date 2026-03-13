@@ -34,3 +34,4 @@ log_level: "INFO"
 mlflow:
   tracking_uri: null        # env var MLFLOW_TRACKING_URI used if null; null = local mlruns/
   experiment_name: null     # defaults to project.name if null
+  registry_model_name: null # defaults to "{project.name}-{task_type}" if null

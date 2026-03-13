@@ -96,11 +96,15 @@ def evaluate(
     )
     metrics_to_compare = [rule.metric for rule in task_config.rules]
 
-    # --- Production model lookup (bootstrap until ID 9 MLflow Model Registry is ready) ---
-    # ID 9 will replace this with MLflow Model Registry lookup.
-    # Until then, always returns no_baseline — every run is treated as first run.
-    comparison = no_baseline_comparison()
-    logger.info("  Comparison: no production model registered yet (ID 9 pending) — bootstrap scenario.")
+    # --- Production model lookup via MLflow Model Registry (ID 9) ---
+    from src.registry.model_registry import get_production_model_metrics
+    production_metrics = get_production_model_metrics(config)
+    if production_metrics is None:
+        comparison = no_baseline_comparison()
+        logger.info("  Comparison: no Production model in registry — bootstrap scenario.")
+    else:
+        comparison = compare_metrics(metrics, production_metrics, metrics_to_compare)
+        logger.info("  Comparison verdict: %s", comparison.get("overall_verdict", "unknown").upper())
 
 
     report = {

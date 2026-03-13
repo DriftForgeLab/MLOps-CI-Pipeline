@@ -23,6 +23,7 @@ dependencies = [
 [project.scripts] # Here you can define command-line scripts for running the pipeline and API
 #Example:
 run-pipeline = "src.pipeline.run_pipeline:main"
+rollback-model = "src.registry.rollback:main"
 #run-api = "src.deployment.app:main" Can be activated in later sprint
 
 [tool.setuptools.packages.find]
