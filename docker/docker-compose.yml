@@ -1,0 +1,36 @@
+# =============================================================================
+# docker/docker-compose.yml — Local deployment of the prediction service
+# =============================================================================
+# Usage:
+#   docker compose -f docker/docker-compose.yml up --build
+#
+# Prerequisites:
+#   - At least one model promoted to Production via the pipeline.
+#   - A .env file in the project root (copy from .env.example).
+# =============================================================================
+
+services:
+  prediction-api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: mlops-prediction-api
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      # Read-only mount of the MLflow tracking store for model loading.
+      - ../mlruns:/app/mlruns:ro
+      # Read-only mount of config files so deployment.yaml and pipeline.yaml
+      # can be read at runtime without baking them into the image.
+      - ../src/config:/app/src/config:ro
+    env_file:
+      - ../.env
+    environment:
+      - MLFLOW_TRACKING_URI=/app/mlruns
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3

@@ -33,3 +33,10 @@ jobs:
         with:
           name: run-report
           path: outputs/run_report.json
+
+      - name: Build Docker image
+        run: docker build -f docker/Dockerfile -t mlops-prediction-api:ci-${{ github.sha }} .
+
+      - name: Verify container imports
+        run: |
+          docker run --rm mlops-prediction-api:ci-${{ github.sha }} python -c "from src.deployment import startup_checks; print('OK')"

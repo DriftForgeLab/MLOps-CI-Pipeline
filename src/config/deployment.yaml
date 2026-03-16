@@ -1,0 +1,23 @@
+# =============================================================================
+# src/config/deployment.yaml — Deployment configuration
+# =============================================================================
+# Controls how the prediction service identifies and loads models,
+# and how the server is configured for local and containerized deployment.
+# =============================================================================
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  log_level: "info"
+
+model:
+  # Only serve models in this MLflow stage.
+  allowed_stage: "Production"
+  # Fail startup if no Production model is found.
+  require_production_model: true
+  # Maximum seconds to wait for model to load at startup.
+  startup_timeout_seconds: 120
+
+healthcheck:
+  # Include model metadata (version, run_id, algorithm) in health response.
+  include_model_info: true

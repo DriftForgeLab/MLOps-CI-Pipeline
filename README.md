@@ -71,5 +71,27 @@ data/processed/<dataset>/<version_id>/preprocessed/  train.csv  val.csv  test.cs
 
 Preprocessing reads column definitions (`target`, `features`) from the versioned `dataset.yaml` — no separate config file is needed.
 
+## Deployment
+
+The prediction service runs as a Docker container that loads the current
+Production model from the MLflow registry at startup.
+
+```bash
+# 1. Make sure a Production model exists (run pipeline and approve)
+run-pipeline --config src/config/pipeline.yaml
+
+# 2. Copy environment template
+cp .env.example .env
+
+# 3. Build and start the container
+docker compose -f docker/docker-compose.yml up --build
+
+# 4. Verify
+curl http://localhost:8000/health
+```
+
+See [docs/deployment.md](docs/deployment.md) for full configuration,
+model governance details, and troubleshooting.
+
 ## Adding Datasets
 See `data/raw/README.md` for instructions on how to add new datasets.
