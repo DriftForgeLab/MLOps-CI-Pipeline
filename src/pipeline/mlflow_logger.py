@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 import mlflow
 
 from src.config.loader import PipelineConfig
+from src.registry.model_registry import MODEL_ARTIFACT_SUBPATH
 
 _logger = logging.getLogger(__name__)
 
@@ -107,7 +108,7 @@ def log_training_artifacts_to_mlflow(model_dir: Path, preprocessed_dir: Path) ->
     if not mlflow.active_run():
         _logger.warning("No active MLflow run — skipping training artifact logging.")
         return
-    mlflow.log_artifacts(str(model_dir), artifact_path="model")
+    mlflow.log_artifacts(str(model_dir), artifact_path=MODEL_ARTIFACT_SUBPATH)
     for fname in ("feature_map.json", "metadata.json"):
         fpath = preprocessed_dir / fname
         if fpath.exists():
