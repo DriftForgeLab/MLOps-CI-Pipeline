@@ -29,16 +29,18 @@ def _get_tracking_uri() -> str:
     return Path("mlruns").resolve().as_uri()
 
 
-def load_production_model() -> tuple[object, dict]:
+def load_production_model() -> tuple[object, dict, dict]:
     """
-    Load the active production model and its metadata.
+    Load the active production model, its metadata, and the feature map.
 
     Queries the MLflow Model Registry for the current Production version,
-    then loads the corresponding model artifact from the local artifact store.
+    then loads the model artifact, metadata.json, and feature_map.json
+    from the local artifact store.
 
     Returns:
-        Tuple of (model, metadata) where model is the production model
-        and metadata is the dict from metadata.json.
+        Tuple of (model, metadata, feature_map) where model is the loaded
+        production model, metadata is the dict from metadata.json, and
+        feature_map contains the expected input features for validation.
 
     Raises:
         RuntimeError: If no production model is registered or artifact is missing.
@@ -83,7 +85,7 @@ def load_production_model() -> tuple[object, dict]:
         logger.info("Loading model via MLflow URI: %s", model_uri)
         model = mlflow.sklearn.load_model(model_uri)
         metadata = _get_metadata_from_run(client, run_id)
-        return model, metadata
+        return model, metadata, {}
 
     model = joblib.load(model_path)
     logger.info("Model loaded from: %s", model_path.resolve())
@@ -91,7 +93,22 @@ def load_production_model() -> tuple[object, dict]:
     metadata_path = model_path.parent / "metadata.json"
     metadata = json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
 
-    return model, metadata
+    version_id = _find_version_id_for_run(client, run_id)
+    feature_map_path = (
+        Path("data/processed") / _get_dataset_name(client, run_id)
+        / version_id / "preprocessed" / "feature_map.json"
+    )
+    feature_map = json.loads(feature_map_path.read_text()) if feature_map_path.exists() else {}
+    if not feature_map:
+        logger.warning("feature_map.json not found at %s — input validation will be limited.", feature_map_path)
+
+    return model, metadata, feature_map
+
+
+def _get_dataset_name(client: MlflowClient, run_id: str) -> str:
+    """Get dataset name from the MLflow run tags."""
+    run = client.get_run(run_id)
+    return run.data.tags.get("pipeline.dataset", "")
 
 
 def _find_version_id_for_run(client: MlflowClient, run_id: str) -> str:

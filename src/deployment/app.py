@@ -23,9 +23,10 @@ _state: dict = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load the production model once at startup."""
-    model, metadata = load_production_model()
+    model, metadata, feature_map = load_production_model()
     _state["model"] = model
     _state["metadata"] = metadata
+    _state["feature_map"] = feature_map
     logger.info("API startup complete — model ready.")
     yield
     _state.clear()

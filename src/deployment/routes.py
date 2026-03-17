@@ -1,17 +1,68 @@
 # =============================================================================
 # src/deployment/routes.py — API route definitions
 # =============================================================================
-# Responsibility: Define all API endpoints.
-# =============================================================================
 from __future__ import annotations
 
-from fastapi import APIRouter
+import logging
+
+import numpy as np
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from src.deployment.schemas import PredictionResponse
+
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/health")
 def health() -> JSONResponse:
     """Health check endpoint — confirms the API is running."""
     return JSONResponse(content={"status": "ok"})
+
+
+@router.post("/predict", response_model=PredictionResponse)
+def predict(request: Request, body: dict) -> PredictionResponse:
+    """Run inference using the active production model.
+
+    Accepts a JSON object with feature names matching the model's feature map.
+    Returns prediction result with model metadata.
+    """
+    state = request.app.state.model_state
+    model = state["model"]
+    metadata = state["metadata"]
+    feature_map = state["feature_map"]
+
+    expected_features = feature_map.get("output_features", [])
+
+    if not expected_features:
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Feature map not available — cannot validate input."}
+        )
+
+    missing = [f for f in expected_features if f not in body]
+    if missing:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": f"Missing required features: {missing}"}
+        )
+
+    try:
+        features = np.array([[float(body[f]) for f in expected_features]])
+    except (ValueError, TypeError) as e:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": f"Invalid feature value: {e}"}
+        )
+
+    prediction = model.predict(features)[0]
+    if hasattr(prediction, "item"):
+        prediction = prediction.item()
+
+    return PredictionResponse(
+        prediction=str(prediction),
+        model_version_id=metadata.get("dataset_version_id", "unknown"),
+        algorithm=metadata.get("algorithm", "unknown"),
+        task_type=metadata.get("task_type", "unknown"),
+    )
