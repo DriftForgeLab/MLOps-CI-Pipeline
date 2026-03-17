@@ -56,9 +56,16 @@ def predict(request: Request, body: dict) -> PredictionResponse:
             content={"detail": f"Invalid feature value: {e}"}
         )
 
-    prediction = model.predict(features)[0]
-    if hasattr(prediction, "item"):
-        prediction = prediction.item()
+    try:
+        prediction = model.predict(features)[0]
+        if hasattr(prediction, "item"):
+            prediction = prediction.item()
+    except Exception as e:
+        logger.error("Inference failed: %s", e)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Inference failed due to an internal error."}
+        )
 
     return PredictionResponse(
         prediction=str(prediction),
