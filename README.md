@@ -103,7 +103,6 @@ curl http://localhost:8000/health
 See [docs/deployment.md](docs/deployment.md) for full configuration,
 model governance details, and troubleshooting.
 
-## Image Classification
 
 ## Image Classification
 
