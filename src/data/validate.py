@@ -34,6 +34,7 @@ _ALLOWED_DATASET_YAML_KEYS: set[str] = {
     "target",
     "schema",
     "constraints",
+    "image_properties",
     # Added by ingestion/versioning pipeline:
     "version_id",
     "split",
@@ -82,14 +83,20 @@ def validate_dataset(dataset_name: str, version_id: str, processed_dir: Path = P
 
     if not yaml_path.exists():
         errors.append(f"Missing dataset.yaml in {version_dir}")
-    if not csv_path.exists():
+        _fail(errors)
+
+    # Read metadata early to determine task_type before checking data.csv
+    with open(yaml_path, "r") as f:
+        metadata_peek = yaml.safe_load(f)
+    is_image = isinstance(metadata_peek, dict) and metadata_peek.get("task_type") == "image_classification"
+
+    if not is_image and not csv_path.exists():
         errors.append(f"Missing data.csv in {version_dir}")
 
     if errors:
         _fail(errors)
 
-    with open(yaml_path, "r") as f:
-        metadata = yaml.safe_load(f)
+    metadata = metadata_peek
 
     if not isinstance(metadata, dict):
         _fail([f"Invalid dataset.yaml at '{yaml_path}': expected a YAML mapping/object"])
@@ -106,12 +113,28 @@ def validate_dataset(dataset_name: str, version_id: str, processed_dir: Path = P
             ", ".join(sorted(extra_top)),
         )
 
-    if metadata.get("task_type") not in {"classification", "regression"}:
-        errors.append(f"Invalid task_type '{metadata.get('task_type')}' — must be classification or regression")
+    if metadata.get("task_type") not in {"classification", "regression", "image_classification"}:
+        errors.append(f"Invalid task_type '{metadata.get('task_type')}' — must be classification, regression, or image_classification")
 
     if errors:
         _fail(errors)
 
+    task_type = metadata["task_type"]
+
+    if task_type == "image_classification":
+        _validate_image_dataset(version_dir, metadata, errors)
+    else:
+        _validate_tabular_dataset(csv_path, metadata, errors)
+
+    if errors:
+        _fail(errors)
+
+    logger.info("  Dataset '%s' version '%s' passed validation.", dataset_name, version_id)
+
+
+def _validate_tabular_dataset(
+    csv_path: Path, metadata: dict, errors: list[str]
+) -> None:
     df_head = pd.read_csv(csv_path, nrows=0)
 
     expected_columns = set(metadata["features"]) | {metadata["target"]}
@@ -148,10 +171,34 @@ def validate_dataset(dataset_name: str, version_id: str, processed_dir: Path = P
     if df_one.empty:
         errors.append("data.csv is empty")
 
-    if errors:
-        _fail(errors)
 
-    logger.info("  Dataset '%s' version '%s' passed validation.", dataset_name, version_id)
+def _validate_image_dataset(
+    version_dir: Path, metadata: dict, errors: list[str]
+) -> None:
+    images_dir = version_dir / "images"
+    if not images_dir.exists() or not images_dir.is_dir():
+        errors.append(f"Missing 'images/' directory in {version_dir}")
+        return
+
+    image_props = metadata.get("image_properties", {}) or {}
+    expected_formats = set(image_props.get("expected_formats", [".jpg", ".png"]))
+    min_per_class = image_props.get("min_images_per_class", 1)
+
+    class_dirs = [d for d in images_dir.iterdir() if d.is_dir()]
+    if not class_dirs:
+        errors.append(f"No class subdirectories found in {images_dir}")
+        return
+
+    for class_dir in class_dirs:
+        image_files = [
+            f for f in class_dir.iterdir()
+            if f.is_file() and f.suffix.lower() in expected_formats
+        ]
+        if len(image_files) < min_per_class:
+            errors.append(
+                f"Class '{class_dir.name}' has {len(image_files)} image(s), "
+                f"minimum required is {min_per_class}"
+            )
 
 
 def _fail(errors: list[str]) -> None:
@@ -220,7 +267,7 @@ def validate_split_data(
             )
 
     # --- Label set check (classification only) ---
-    if task_type == "classification" and target in df.columns:
+    if task_type in ("classification", "image_classification") and target in df.columns:
         allowed_labels: set = set(constraints.get("label_classes", []))
         if allowed_labels:
             actual_labels: set = set(df[target].dropna().unique())

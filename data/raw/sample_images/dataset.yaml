@@ -1,0 +1,15 @@
+name: sample_images
+task_type: image_classification
+description: "Synthetic image classification dataset for testing"
+source: "generated"
+created_at: "2026-03-18"
+features: []
+target: label
+schema: {}
+image_properties:
+  expected_formats: [".png"]
+  min_images_per_class: 5
+constraints:
+  min_rows: 10
+  max_null_fraction: 0.0
+  label_classes: [cats, dogs]

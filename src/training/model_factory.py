@@ -32,7 +32,7 @@ def create_model(training_config: TrainingConfig, task_type: str, random_seed: i
     hp = training_config.model.hyperparameters
 
     if algorithm == "random_forest":
-        if task_type == "classification":
+        if task_type in ("classification", "image_classification"):
             return RandomForestClassifier(
                 n_estimators=hp.n_estimators,
                 max_depth=hp.max_depth,
@@ -49,7 +49,7 @@ def create_model(training_config: TrainingConfig, task_type: str, random_seed: i
             )
 
     if algorithm == "logistic_regression":
-        if task_type == "classification":
+        if task_type in ("classification", "image_classification"):
             return LogisticRegression(
                 C=hp.C,
                 solver=hp.solver,
@@ -65,5 +65,6 @@ def create_model(training_config: TrainingConfig, task_type: str, random_seed: i
     raise ValueError(
         f"Unsupported combination: algorithm='{algorithm}', task_type='{task_type}'. "
         f"Supported combinations: random_forest+classification, random_forest+regression, "
-        f"logistic_regression+classification, linear_regression+regression."
+        f"logistic_regression+classification, linear_regression+regression, "
+        f"random_forest+image_classification, logistic_regression+image_classification."
     )

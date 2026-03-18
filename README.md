@@ -61,12 +61,22 @@ The pipeline executes the following stages in order:
 
 ## Data Flow
 
+**Tabular datasets:**
 ```
 data/raw/<dataset>/data.csv
         ↓  ingestion + versioning
 data/processed/<dataset>/<version_id>/data.csv  +  train/  val/  test/
         ↓  preprocessing
 data/processed/<dataset>/<version_id>/preprocessed/  train.csv  val.csv  test.csv
+```
+
+**Image datasets:**
+```
+data/raw/<dataset>/images/{class}/...
+        ↓  versioning + stratified splitting
+data/processed/<dataset>/<version_id>/train/images/{class}/...
+        ↓  preprocessing (resize, normalize, flatten)
+data/processed/<dataset>/<version_id>/preprocessed/  train.npz  val.npz  test.npz
 ```
 
 Preprocessing reads column definitions (`target`, `features`) from the versioned `dataset.yaml` — no separate config file is needed.
@@ -92,6 +102,19 @@ curl http://localhost:8000/health
 
 See [docs/deployment.md](docs/deployment.md) for full configuration,
 model governance details, and troubleshooting.
+
+## Image Classification
+
+The pipeline supports image classification datasets using the ImageFolder
+convention. Place class-labeled images under `data/raw/<name>/images/{class}/`
+with a `dataset.yaml` specifying `task_type: image_classification`.
+
+```bash
+run-pipeline --config src/config/pipeline_image_classification.yaml
+```
+
+See [docs/image_datasets.md](docs/image_datasets.md) for folder structure,
+preprocessing configuration, augmentation, and limitations.
 
 ## Adding Datasets
 See `data/raw/README.md` for instructions on how to add new datasets.

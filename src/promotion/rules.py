@@ -50,7 +50,7 @@ def run_promotion_rules(
         - description: str
     """
     task_config = (
-        promotion_config.classification if task_type == "classification" else promotion_config.regression
+        promotion_config.classification if task_type in ("classification", "image_classification") else promotion_config.regression
     )
 
     violations: list[dict] = []

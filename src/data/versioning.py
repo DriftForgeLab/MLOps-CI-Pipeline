@@ -11,8 +11,9 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pandas as pd
 import yaml
+
+from src.data.image_utils import compute_folder_hash
 
 
 def _compute_version_id(csv_path: Path) -> str:
@@ -22,13 +23,28 @@ def _compute_version_id(csv_path: Path) -> str:
 
 def create_dataset_version(dataset_name: str, raw_dir: Path = Path("data/raw"), processed_dir: Path = Path("data/processed")) -> Path:
     raw_dataset_dir = raw_dir / dataset_name
-    csv_path = raw_dataset_dir / "data.csv"
     yaml_path = raw_dataset_dir / "dataset.yaml"
 
-    if not csv_path.exists():
-        raise FileNotFoundError(f"No data.csv found in {raw_dataset_dir}")
     if not yaml_path.exists():
         raise FileNotFoundError(f"No dataset.yaml found in {raw_dataset_dir}")
+
+    with open(yaml_path, "r") as f:
+        metadata = yaml.safe_load(f)
+
+    task_type = metadata.get("task_type", "")
+
+    if task_type == "image_classification":
+        return _create_image_version(raw_dataset_dir, dataset_name, metadata, processed_dir)
+    else:
+        return _create_tabular_version(raw_dataset_dir, dataset_name, metadata, processed_dir)
+
+
+def _create_tabular_version(
+    raw_dataset_dir: Path, dataset_name: str, metadata: dict, processed_dir: Path
+) -> Path:
+    csv_path = raw_dataset_dir / "data.csv"
+    if not csv_path.exists():
+        raise FileNotFoundError(f"No data.csv found in {raw_dataset_dir}")
 
     version_id = _compute_version_id(csv_path)
 
@@ -38,11 +54,7 @@ def create_dataset_version(dataset_name: str, raw_dir: Path = Path("data/raw"), 
         return version_dir
 
     version_dir.mkdir(parents=True, exist_ok=True)
-
     shutil.copy(csv_path, version_dir / "data.csv")
-
-    with open(yaml_path, "r") as f:
-        metadata = yaml.safe_load(f)
 
     metadata["version_id"] = version_id
     metadata["versioned_at"] = datetime.now(timezone.utc).isoformat()
@@ -51,4 +63,31 @@ def create_dataset_version(dataset_name: str, raw_dir: Path = Path("data/raw"), 
         yaml.dump(metadata, f, default_flow_style=False, sort_keys=False)
 
     print(f"  Dataset version created: {version_dir}")
+    return version_dir
+
+
+def _create_image_version(
+    raw_dataset_dir: Path, dataset_name: str, metadata: dict, processed_dir: Path
+) -> Path:
+    images_dir = raw_dataset_dir / "images"
+    if not images_dir.exists():
+        raise FileNotFoundError(f"No images/ directory found in {raw_dataset_dir}")
+
+    version_id = compute_folder_hash(images_dir)
+
+    version_dir = processed_dir / dataset_name / version_id
+    if version_dir.exists():
+        print(f"  Version {version_id} already exists for '{dataset_name}' — skipping.")
+        return version_dir
+
+    version_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(images_dir, version_dir / "images")
+
+    metadata["version_id"] = version_id
+    metadata["versioned_at"] = datetime.now(timezone.utc).isoformat()
+
+    with open(version_dir / "dataset.yaml", "w") as f:
+        yaml.dump(metadata, f, default_flow_style=False, sort_keys=False)
+
+    print(f"  Image dataset version created: {version_dir}")
     return version_dir

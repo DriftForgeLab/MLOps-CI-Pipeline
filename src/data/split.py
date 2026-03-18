@@ -87,6 +87,16 @@ def split_dataset(
     processed_dir: Path = Path("data/processed"),
 ) -> None:
     version_dir = processed_dir / dataset_name / version_id
+
+    # Dispatch to image splitting if task_type is image_classification
+    yaml_path = version_dir / "dataset.yaml"
+    with open(yaml_path) as f:
+        meta = yaml.safe_load(f)
+    if meta.get("task_type") == "image_classification":
+        from src.data.image_split import split_image_dataset
+        split_image_dataset(dataset_name, version_id, random_seed, train_ratio, val_ratio, processed_dir)
+        return
+
     csv_path = version_dir / "data.csv"
 
     train_dir = version_dir / "train"

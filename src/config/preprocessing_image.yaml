@@ -1,0 +1,51 @@
+# =============================================================================
+# src/config/preprocessing_image.yaml — Image preprocessing configuration
+# =============================================================================
+# Controls image-specific preprocessing: resize, normalization, augmentation.
+# Tabular options (encoding, scaling, missing_values) are ignored for images.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Data contract enforcement
+# ---------------------------------------------------------------------------
+fail_on_nulls: true
+min_rows: 10
+validate_types: false
+validate_labels: true
+validate_on_skip: false
+
+# ---------------------------------------------------------------------------
+# Tabular feature overrides (unused for image datasets)
+# ---------------------------------------------------------------------------
+numeric_features: null
+categorical_features: null
+
+encoding:
+  enabled: false
+  strategy: "onehot"
+  handle_unknown: "ignore"
+  min_frequency: null
+
+scaling:
+  enabled: false
+  strategy: "standard"
+
+missing_values:
+  policy: "passthrough"
+  numeric_strategy: "mean"
+  categorical_strategy: "most_frequent"
+  fill_value: null
+
+# ---------------------------------------------------------------------------
+# Image preprocessing
+# ---------------------------------------------------------------------------
+image:
+  target_size: [64, 64]       # (height, width) — resize all images to this
+  color_mode: "rgb"           # "rgb" or "grayscale"
+  normalize: true             # scale to [0,1] then channel-wise normalization
+  flatten: true               # flatten to 1D vector for sklearn
+  augmentation:
+    enabled: false
+    horizontal_flip: false
+    rotation_degrees: 0
+    augmentation_factor: 1    # 1 = no augmentation

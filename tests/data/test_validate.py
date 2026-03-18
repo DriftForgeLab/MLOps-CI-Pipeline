@@ -155,3 +155,91 @@ def test_multiple_violations_reported_in_single_error():
     message = str(exc_info.value)
     assert "sepal_len" in message
     assert "unknown_class" in message
+
+
+# ---------------------------------------------------------------------------
+# Image dataset validation
+# ---------------------------------------------------------------------------
+
+from src.data.validate import validate_dataset
+import yaml
+from PIL import Image as PILImage
+
+
+def _make_image_dataset_dir(tmp_path, classes=None, min_per_class=1):
+    """Create a valid image dataset directory for validation testing."""
+    if classes is None:
+        classes = {"cats": 3, "dogs": 3}
+
+    version_id = "v1"
+    version_dir = tmp_path / "imgdata" / version_id
+    images_dir = version_dir / "images"
+
+    for class_name, count in classes.items():
+        class_dir = images_dir / class_name
+        class_dir.mkdir(parents=True)
+        for i in range(count):
+            img = PILImage.new("RGB", (4, 4), color=(i * 40, 0, 0))
+            img.save(class_dir / f"img_{i}.png")
+
+    meta = {
+        "name": "imgdata",
+        "task_type": "image_classification",
+        "features": [],
+        "target": "label",
+        "schema": {},
+        "image_properties": {
+            "expected_formats": [".png"],
+            "min_images_per_class": min_per_class,
+        },
+        "constraints": {
+            "min_rows": 2,
+            "max_null_fraction": 0.0,
+            "label_classes": sorted(classes.keys()),
+        },
+    }
+    with open(version_dir / "dataset.yaml", "w") as f:
+        yaml.dump(meta, f)
+
+    return tmp_path, version_id
+
+
+def test_image_dataset_validation_passes(tmp_path):
+    base, vid = _make_image_dataset_dir(tmp_path, {"cats": 3, "dogs": 3})
+    validate_dataset("imgdata", vid, processed_dir=base)
+
+
+def test_image_dataset_missing_images_dir_fails(tmp_path):
+    base, vid = _make_image_dataset_dir(tmp_path, {"cats": 3, "dogs": 3})
+    import shutil
+    shutil.rmtree(base / "imgdata" / vid / "images")
+    with pytest.raises(ValueError, match="images"):
+        validate_dataset("imgdata", vid, processed_dir=base)
+
+
+def test_image_dataset_too_few_images_per_class_fails(tmp_path):
+    base, vid = _make_image_dataset_dir(tmp_path, {"cats": 1, "dogs": 1}, min_per_class=5)
+    with pytest.raises(ValueError, match="minimum required"):
+        validate_dataset("imgdata", vid, processed_dir=base)
+
+
+def test_image_dataset_no_class_dirs_fails(tmp_path):
+    version_id = "v1"
+    version_dir = tmp_path / "imgdata" / version_id
+    images_dir = version_dir / "images"
+    images_dir.mkdir(parents=True)
+    # Just put a loose file, no class dirs
+    PILImage.new("RGB", (4, 4)).save(images_dir / "loose.png")
+
+    meta = {
+        "name": "imgdata",
+        "task_type": "image_classification",
+        "features": [],
+        "target": "label",
+        "schema": {},
+    }
+    with open(version_dir / "dataset.yaml", "w") as f:
+        yaml.dump(meta, f)
+
+    with pytest.raises(ValueError, match="class subdirectories"):
+        validate_dataset("imgdata", version_id, processed_dir=tmp_path)
