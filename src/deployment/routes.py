@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import logging
 
-import numpy as np
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+import numpy as np
 
 from src.deployment.schemas import PredictionResponse
 
@@ -29,11 +29,9 @@ def predict(request: Request, body: dict) -> PredictionResponse:
     Returns prediction result with model metadata.
     """
     state = request.app.state.model_state
-    model = state["model"]
-    metadata = state["metadata"]
-    feature_map = state["feature_map"]
+    model_info = state["model_info"]
 
-    expected_features = feature_map.get("output_features", [])
+    expected_features = model_info.feature_names
 
     if not expected_features:
         return JSONResponse(
@@ -57,7 +55,7 @@ def predict(request: Request, body: dict) -> PredictionResponse:
         )
 
     try:
-        prediction = model.predict(features)[0]
+        prediction = model_info.model.predict(features)[0]
         if hasattr(prediction, "item"):
             prediction = prediction.item()
     except Exception as e:
@@ -69,7 +67,7 @@ def predict(request: Request, body: dict) -> PredictionResponse:
 
     return PredictionResponse(
         prediction=str(prediction),
-        model_version_id=metadata.get("dataset_version_id", "unknown"),
-        algorithm=metadata.get("algorithm", "unknown"),
-        task_type=metadata.get("task_type", "unknown"),
+        model_version_id=model_info.dataset_version_id,
+        algorithm=model_info.algorithm,
+        task_type="classification",
     )

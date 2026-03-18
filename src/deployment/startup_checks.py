@@ -94,49 +94,50 @@ def load_production_model(config: PipelineConfig) -> ProductionModelInfo:
     # --- Extract lineage tags from the model version -----------------------
     tags = prod_version.tags or {}
 
-    # --- Load the model artifact via MLflow --------------------------------
-    tracking_uri = resolve_tracking_uri(config)
-    mlflow.set_tracking_uri(tracking_uri)
-
-    model_uri = f"models:/{model_name}/Production"
-    try:
-        loaded_model = mlflow.pyfunc.load_model(model_uri)
-        _logger.info("Model artifact loaded from: %s", model_uri)
-    except Exception as exc:
-        # Fallback: try loading via the run artifact path directly.
-        _logger.warning(
-            "Failed to load model via '%s': %s. "
-            "Attempting fallback via run artifact path.",
-            model_uri, exc,
+# --- Load the model artifact via joblib from local artifact store -------
+    run = client.get_run(prod_version.run_id)
+    version_id = run.data.tags.get("pipeline.dataset_version_id", "")
+    if not version_id:
+        raise RuntimeError(
+            f"Could not find 'pipeline.dataset_version_id' tag on run '{prod_version.run_id}'."
         )
-        fallback_uri = f"runs:/{prod_version.run_id}/model"
-        try:
-            loaded_model = mlflow.pyfunc.load_model(fallback_uri)
-            _logger.info("Model artifact loaded via fallback: %s", fallback_uri)
-        except Exception as fallback_exc:
-            raise RuntimeError(
-                f"Cannot load Production model artifact. "
-                f"Primary URI '{model_uri}' failed: {exc}. "
-                f"Fallback URI '{fallback_uri}' failed: {fallback_exc}."
-            ) from fallback_exc
 
-    # --- Try to recover feature names from logged feature_map.json ---------
+    model_path = Path("artifacts/runs") / version_id / "model" / "model.joblib"
+    if not model_path.exists():
+        raise RuntimeError(
+            f"Model artifact not found at '{model_path}'. "
+            "The registry pointer may be stale or artifacts may have been deleted."
+        )
+
+    import joblib
+    loaded_model = joblib.load(model_path)
+    _logger.info("Model artifact loaded from: %s", model_path.resolve())
+    
+
+    # --- Try to recover feature names from feature_map.json ---------
     feature_names: list[str] = []
     try:
         run = client.get_run(prod_version.run_id)
-        artifacts_dir = client.download_artifacts(
-            prod_version.run_id, "preprocessing/feature_map.json"
+        version_id = run.data.tags.get("pipeline.dataset_version_id", "")
+        dataset_name = run.data.tags.get("pipeline.dataset", "")
+        feature_map_path = (
+            Path("data/processed") / dataset_name / version_id / "preprocessed" / "feature_map.json"
         )
-        with open(artifacts_dir, "r") as f:
-            feature_map = json.load(f)
-        feature_names = feature_map.get("output_features", [])
-        _logger.info("Feature names recovered: %s", feature_names)
+        if feature_map_path.exists():
+            with open(feature_map_path) as f:
+                feature_map = json.load(f)
+            feature_names = feature_map.get("output_features", [])
+            _logger.info("Feature names recovered: %s", feature_names)
+        else:
+            _logger.warning(
+                "feature_map.json not found at %s — input validation will be skipped.",
+                feature_map_path,
+            )
     except Exception:
         _logger.warning(
-            "Could not recover feature names from feature_map.json artifact. "
-            "Feature validation at prediction time will be skipped."
+            "Could not recover feature names — input validation will be skipped."
         )
-
+        
     return ProductionModelInfo(
         model=loaded_model,
         model_name=model_name,

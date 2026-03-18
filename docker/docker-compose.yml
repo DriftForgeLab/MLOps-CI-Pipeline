@@ -23,6 +23,9 @@ services:
       # Read-only mount of config files so deployment.yaml and pipeline.yaml
       # can be read at runtime without baking them into the image.
       - ../src/config:/app/src/config:ro
+      # Read-only mount of model artifacts for joblib-based model loading.
+      - ../artifacts:/app/artifacts:ro
+      - ../data/processed:/app/data/processed:ro
     env_file:
       - ../.env
     environment:
