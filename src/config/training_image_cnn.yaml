@@ -1,0 +1,17 @@
+# =============================================================================
+# src/config/training_image_cnn.yaml — CNN image classification training config
+# =============================================================================
+model:
+  algorithm: "cnn"
+  architecture:
+    conv_layers:
+      - out_channels: 32
+        kernel_size: 3
+      - out_channels: 64
+        kernel_size: 3
+    fc_units: 128
+    dropout: 0.3
+  hyperparameters:
+    epochs: 10
+    batch_size: 32
+    learning_rate: 0.001

@@ -85,6 +85,9 @@ def _training_stage(config: PipelineConfig, version_id: str) -> None:
     elif config.task_type == "image_classification":
         from src.training.image_classification.train import run_training as run_image_training
         result = run_image_training(config, version_id)
+    elif config.task_type == "image_classification_cnn":
+        from src.training.image_classification_cnn.train import run_training as run_cnn_training
+        result = run_cnn_training(config, version_id)
     else:
         raise ValueError(f"Unsupported task_type: '{config.task_type}'")
 

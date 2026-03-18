@@ -45,13 +45,20 @@ def evaluate(
     """
     # --- Load model ---
     eval_config = load_evaluation_config(Path(config.configs.evaluation))
-    model_path = artifact_dir / version_id / "model" / "model.joblib"
-    if not model_path.exists():
+    model_dir = artifact_dir / version_id / "model"
+    pt_path = model_dir / "model.pt"
+    joblib_path = model_dir / "model.joblib"
+
+    if pt_path.exists():
+        import torch
+        model = torch.load(pt_path, weights_only=False)
+    elif joblib_path.exists():
+        model = joblib.load(joblib_path)
+    else:
         raise FileNotFoundError(
-            f"Model artifact not found at '{model_path}'. "
+            f"Model artifact not found at '{model_dir}'. "
             "Run the training stage before evaluation."
         )
-    model = joblib.load(model_path)
 
     # --- Load feature map ---
     preprocessed_dir = (
@@ -73,7 +80,7 @@ def evaluate(
     target: str = feature_map["target"]
 
     # --- Load val split ---
-    if config.task_type == "image_classification":
+    if config.task_type in ("image_classification", "image_classification_cnn"):
         val_npz_path = preprocessed_dir / "val.npz"
         if not val_npz_path.exists():
             raise FileNotFoundError(
@@ -82,6 +89,8 @@ def evaluate(
             )
         data = np.load(val_npz_path)
         X, y_true = data["X"], data["y"]
+        if config.task_type == "image_classification_cnn" and X.ndim == 4:
+            X = X.transpose(0, 3, 1, 2)
     else:
         val_path = preprocessed_dir / "val.csv"
         if not val_path.exists():
@@ -102,7 +111,7 @@ def evaluate(
     promotion_config = load_promotion_config(Path(config.configs.promotion))
     task_config = (
         promotion_config.classification
-        if config.task_type in ("classification", "image_classification")
+        if config.task_type in ("classification", "image_classification", "image_classification_cnn")
         else promotion_config.regression
     )
     metrics_to_compare = [rule.metric for rule in task_config.rules]
@@ -138,7 +147,7 @@ def evaluate(
 
 def _compute_metrics(y_true, y_pred, task_type: str, eval_config) -> dict:
     """Compute metrics based on task type."""
-    if task_type in ("classification", "image_classification"):
+    if task_type in ("classification", "image_classification", "image_classification_cnn"):
         from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
         avg = eval_config.classification.averaging
         return {

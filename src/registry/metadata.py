@@ -12,10 +12,11 @@
 
 import json
 import logging
-from datetime import datetime, timezone
+
 from pathlib import Path
 
 import joblib
+import torch
 
 from src.training import TrainingResult
 
@@ -30,23 +31,38 @@ def save_model_artifact(
     """
     Save a trained model and its metadata to a versioned artifact directory.
 
+    Supports both sklearn models (saved as model.joblib) and PyTorch models
+    (saved as model.pt). The format is determined automatically from the model type.
+
     Args:
         result:       TrainingResult from run_training()
         run_id:       Unique identifier for this pipeline run (e.g. config_hash)
         artifact_dir: Base directory for all run artifacts
 
     Returns:
-        Path to the directory containing model.joblib and metadata.json
+        Path to the directory containing the model artifact and metadata.json
     """
     model_dir = artifact_dir / run_id / "model"
     model_dir.mkdir(parents=True, exist_ok=True)
 
-    model_path = model_dir / "model.joblib"
-    joblib.dump(result.model, model_path)
+    if hasattr(result.model, 'state_dict'):
+        model_path = model_dir / "model.pt"
+        torch.save(result.model, model_path)
+    else:
+        model_path = model_dir / "model.joblib"
+        joblib.dump(result.model, model_path)
     logger.info("  Model saved to: %s", model_path.resolve())
 
+    model_type_name = type(result.model).__name__
+    if "Classifier" in model_type_name:
+        task_type = "classification"
+    elif model_type_name == "SimpleCNN":
+        task_type = "image_classification_cnn"
+    else:
+        task_type = "regression"
+
     metadata = {
-        "task_type": "classification" if "Classifier" in type(result.model).__name__ else "regression",
+        "task_type": task_type,
         "algorithm": result.algorithm,
         "hyperparameters": result.hyperparameters,
         "dataset_version_id": result.dataset_version_id,

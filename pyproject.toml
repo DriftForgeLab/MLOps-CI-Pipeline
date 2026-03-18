@@ -18,7 +18,9 @@ dependencies = [
     "uvicorn==0.29.0",
     "evidently==0.4.21",
     "pyyaml==6.0.1",
-    "Pillow>=10.0,<12"
+    "Pillow>=10.0,<12",
+    "torch==2.2.2",
+    "torchvision==0.17.2",
 ]
 
 [project.scripts] # Here you can define command-line scripts for running the pipeline and API

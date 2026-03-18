@@ -20,9 +20,8 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-
-import mlflow
-from mlflow.tracking import MlflowClient
+import joblib
+import torch
 
 from src.config.loader import PipelineConfig, load_config, load_deployment_config
 from src.registry.model_registry import (
@@ -53,8 +52,8 @@ class ProductionModelInfo:
 def load_production_model(config: PipelineConfig) -> ProductionModelInfo:
     """Load and validate the Production model from the MLflow Model Registry.
 
-    Uses the same registry query pattern as
-    ``src.registry.model_registry.get_production_model_metrics`` but goes
+    Supports both sklearn models (model.joblib) and PyTorch CNN models (model.pt).
+    Uses the same registry query pattern as get_production_model_metrics but goes
     further: it loads the actual model artifact and extracts lineage tags
     so the API can serve predictions with full traceability.
 
@@ -94,7 +93,7 @@ def load_production_model(config: PipelineConfig) -> ProductionModelInfo:
     # --- Extract lineage tags from the model version -----------------------
     tags = prod_version.tags or {}
 
-# --- Load the model artifact via joblib from local artifact store -------
+    # --- Load the model artifact from local artifact store -----------------
     run = client.get_run(prod_version.run_id)
     version_id = run.data.tags.get("pipeline.dataset_version_id", "")
     if not version_id:
@@ -102,23 +101,25 @@ def load_production_model(config: PipelineConfig) -> ProductionModelInfo:
             f"Could not find 'pipeline.dataset_version_id' tag on run '{prod_version.run_id}'."
         )
 
-    model_path = Path("artifacts/runs") / version_id / "model" / "model.joblib"
-    if not model_path.exists():
+    model_dir = Path("artifacts/runs") / version_id / "model"
+    pt_path = model_dir / "model.pt"
+    joblib_path = model_dir / "model.joblib"
+
+    if pt_path.exists():
+        loaded_model = torch.load(pt_path, weights_only=False)
+        _logger.info("PyTorch model loaded from: %s", pt_path.resolve())
+    elif joblib_path.exists():
+        loaded_model = joblib.load(joblib_path)
+        _logger.info("sklearn model loaded from: %s", joblib_path.resolve())
+    else:
         raise RuntimeError(
-            f"Model artifact not found at '{model_path}'. "
+            f"Model artifact not found at '{model_dir}'. "
             "The registry pointer may be stale or artifacts may have been deleted."
         )
 
-    import joblib
-    loaded_model = joblib.load(model_path)
-    _logger.info("Model artifact loaded from: %s", model_path.resolve())
-    
-
-    # --- Try to recover feature names from feature_map.json ---------
+    # --- Recover feature names from feature_map.json -----------------------
     feature_names: list[str] = []
     try:
-        run = client.get_run(prod_version.run_id)
-        version_id = run.data.tags.get("pipeline.dataset_version_id", "")
         dataset_name = run.data.tags.get("pipeline.dataset", "")
         feature_map_path = (
             Path("data/processed") / dataset_name / version_id / "preprocessed" / "feature_map.json"
@@ -137,7 +138,7 @@ def load_production_model(config: PipelineConfig) -> ProductionModelInfo:
         _logger.warning(
             "Could not recover feature names — input validation will be skipped."
         )
-        
+
     return ProductionModelInfo(
         model=loaded_model,
         model_name=model_name,

@@ -22,7 +22,7 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-VALID_TASK_TYPES: frozenset[str] = {"classification", "regression", "image_classification"} #!!! May need to update VALIDATE and REQUIRED to ENUM in later sprints
+VALID_TASK_TYPES: frozenset[str] = {"classification", "regression", "image_classification", "image_classification_cnn"} #!!! May need to update VALIDATE and REQUIRED to ENUM in later sprints
 VALID_LOG_LEVELS: frozenset[str] = {"DEBUG", "INFO", "WARNING", "ERROR"}
 VALID_PIPELINE_STAGES: frozenset[str] = {"preprocessing", "training", "evaluation", "deployment", "promotion"} #!!! May need to update the validation of Deploymeny in later sprints
 VALID_ALGORITHMS: frozenset[str] = {"random_forest", "logistic_regression", "linear_regression"}
