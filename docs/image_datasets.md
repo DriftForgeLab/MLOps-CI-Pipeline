@@ -2,7 +2,7 @@
 
 The pipeline supports image classification datasets alongside tabular datasets.
 Image datasets flow through the same pipeline entry point (`run-pipeline`) with
-`task_type: image_classification` — no separate CLI or workflow is needed.
+`task_type: image_classification` or `task_type: image_classification_cnn`— no separate CLI or workflow is needed.
 
 ## Folder Structure
 
@@ -141,3 +141,70 @@ The augmented dataset is deterministic given the same seed and config.
   ~10,000 images at 64x64 may require significant RAM.
 - Only `.jpg`, `.jpeg`, `.png`, `.bmp`, `.tiff`, and `.gif` formats are supported.
   Unreadable images are skipped with a warning.
+
+
+## CNN-based Image Classification (PyTorch)
+
+For more Drift-aware image classification with spatial feature learning, use the
+CNN pipeline variant with `task_type: image_classification_cnn`.
+
+### Preprocessing Configuration
+
+Use `preprocessing_image_cnn.yaml` with `flatten: false` to preserve spatial
+structure for the CNN:
+```yaml
+image:
+  target_size: [64, 64]
+  color_mode: "rgb"
+  normalize: true
+  flatten: false              
+  augmentation:
+    enabled: false
+    horizontal_flip: false
+    rotation_degrees: 0
+    augmentation_factor: 1
+```
+
+### Architecture Configuration
+```yaml
+# src/config/training_image_cnn.yaml
+model:
+  algorithm: "cnn"
+  architecture:
+    conv_layers:
+      - out_channels: 32
+        kernel_size: 3
+      - out_channels: 64
+        kernel_size: 3
+    fc_units: 128
+    dropout: 0.3
+  hyperparameters:
+    epochs: 10
+    batch_size: 32
+    learning_rate: 0.001
+```
+
+### Pipeline Configuration
+```yaml
+# src/config/pipeline_image_cnn.yaml
+task_type: "image_classification_cnn"
+dataset: my_images
+configs:
+  preprocessing: "src/config/preprocessing_image_cnn.yaml"
+  training: "src/config/training_image_cnn.yaml"
+```
+
+### Running
+```bash
+run-pipeline --config src/config/pipeline_image_cnn.yaml
+```
+
+### When to use CNN vs sklearn
+
+| | sklearn (image_classification) | CNN (image_classification_cnn) |
+|---|---|---|
+| Setup | Simple, no extra dependencies | Requires PyTorch |
+| Speed | Fast | Slower |
+| Spatial features | No | Yes |
+| Drift analysis | Statistical only | Embedding-based |
+| Recommended for | Quick experiments | Realistic use |

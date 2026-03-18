@@ -5,13 +5,13 @@ model:
   algorithm: "cnn"
   architecture:
     conv_layers:
-      - out_channels: 32
+      - out_channels: 32      # number of filters in first conv layer
+        kernel_size: 3        # 3x3 convolution window
+      - out_channels: 64      # number of filters in second conv layer
         kernel_size: 3
-      - out_channels: 64
-        kernel_size: 3
-    fc_units: 128
-    dropout: 0.3
+    fc_units: 128             # units in the fully connected layer
+    dropout: 0.3              # dropout rate for regularization (0.0–1.0)
   hyperparameters:
-    epochs: 10
-    batch_size: 32
-    learning_rate: 0.001
+    epochs: 10                # number of full passes over the training set
+    batch_size: 32            # images per gradient update
+    learning_rate: 0.001      # Adam optimizer learning rate

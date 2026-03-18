@@ -105,12 +105,17 @@ model governance details, and troubleshooting.
 
 ## Image Classification
 
+## Image Classification
+
 The pipeline supports image classification datasets using the ImageFolder
 convention. Place class-labeled images under `data/raw/<name>/images/{class}/`
 with a `dataset.yaml` specifying `task_type: image_classification`.
-
 ```bash
+# sklearn-based (flattened pixel vectors)
 run-pipeline --config src/config/pipeline_image_classification.yaml
+
+# CNN-based with PyTorch (spatial feature learning, recommended for drift analysis)
+run-pipeline --config src/config/pipeline_image_cnn.yaml
 ```
 
 See [docs/image_datasets.md](docs/image_datasets.md) for folder structure,

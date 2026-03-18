@@ -1,3 +1,10 @@
+# =============================================================================
+# src/config/preprocessing_image_cnn.yaml — CNN image preprocessing config
+# =============================================================================
+# Same as preprocessing_image.yaml but with flatten: false.
+# CNN models require spatial structure (H x W x C), not flattened 1D vectors.
+# =============================================================================
+
 fail_on_nulls: true
 min_rows: 10
 validate_types: false
