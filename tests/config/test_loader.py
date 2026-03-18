@@ -14,7 +14,7 @@ def test_load_config_valid():
     assert config.random_seed == 42
     assert config.log_level == "INFO"
     assert config.project.name == "lightweight-mlops-pipeline"
-    assert config.pipeline_stages == ("preprocessing", "training", "evaluation")
+    assert config.pipeline_stages == ("preprocessing", "training", "evaluation", "promotion")
     assert isinstance(config, PipelineConfig)
 
 def test_load_config_missing_file():
@@ -220,3 +220,75 @@ class TestValidatePositiveInt:
         errors = []
         _validate_positive_int(2, "min_samples_split", errors, min_val=2)
         assert errors == []
+
+
+# ---------------------------------------------------------------------------
+# Image classification config tests
+# ---------------------------------------------------------------------------
+
+def test_load_config_image_classification():
+    config = load_config(CONFIG_DIR / "pipeline_image_classification.yaml")
+    assert config.task_type == "image_classification"
+    assert config.dataset == "sample_images"
+
+
+def test_load_preprocessing_config_with_image_section():
+    from src.config.loader import load_preprocessing_config
+    prep = load_preprocessing_config(CONFIG_DIR / "preprocessing_image.yaml")
+    assert prep.image is not None
+    assert prep.image.target_size == (64, 64)
+    assert prep.image.color_mode == "rgb"
+    assert prep.image.normalize is True
+    assert prep.image.flatten is True
+    assert prep.image.augmentation.enabled is False
+
+
+def test_image_config_invalid_color_mode(tmp_path):
+    from src.config.loader import load_preprocessing_config
+    cfg = tmp_path / "bad.yaml"
+    cfg.write_text(
+        _PREP_CONFIG_YAML + "\nimage:\n  target_size: [64, 64]\n  color_mode: cmyk\n"
+        "  normalize: true\n  flatten: true\n"
+        "  augmentation:\n    enabled: false\n    horizontal_flip: false\n"
+        "    rotation_degrees: 0\n    augmentation_factor: 1\n"
+    )
+    with pytest.raises(ValueError, match="color_mode"):
+        load_preprocessing_config(cfg)
+
+
+def test_image_config_invalid_target_size(tmp_path):
+    from src.config.loader import load_preprocessing_config
+    cfg = tmp_path / "bad.yaml"
+    cfg.write_text(
+        _PREP_CONFIG_YAML + "\nimage:\n  target_size: [64]\n  color_mode: rgb\n"
+        "  normalize: true\n  flatten: true\n"
+        "  augmentation:\n    enabled: false\n    horizontal_flip: false\n"
+        "    rotation_degrees: 0\n    augmentation_factor: 1\n"
+    )
+    with pytest.raises(ValueError, match="target_size"):
+        load_preprocessing_config(cfg)
+
+
+# Reuse the prep config yaml base from test_preprocess for image config tests
+_PREP_CONFIG_YAML = """\
+fail_on_nulls: true
+min_rows: 1
+validate_types: false
+validate_labels: true
+validate_on_skip: false
+numeric_features: null
+categorical_features: null
+encoding:
+  enabled: false
+  strategy: onehot
+  handle_unknown: ignore
+  min_frequency: null
+scaling:
+  enabled: false
+  strategy: standard
+missing_values:
+  policy: passthrough
+  numeric_strategy: mean
+  categorical_strategy: most_frequent
+  fill_value: null
+"""

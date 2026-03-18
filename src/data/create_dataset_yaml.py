@@ -27,10 +27,63 @@ def _ask_text(prompt: str, default: str = "") -> str:
     return raw if raw else default
 
 
+def _generate_image_dataset_yaml(dataset_dir: Path) -> None:
+    """Generate dataset.yaml for an image dataset with ImageFolder structure."""
+    images_dir = dataset_dir / "images"
+    class_dirs = sorted(d for d in images_dir.iterdir() if d.is_dir())
+    class_names = [d.name for d in class_dirs]
+
+    print(f"\nImage dataset '{dataset_dir.name}' is missing dataset.yaml.")
+    print(f"  Detected classes: {', '.join(class_names)}")
+    print(f"  Task type: image_classification (auto-detected from images/ folder)\n")
+
+    source = _ask_text("  Source/origin of dataset", default="unknown")
+    description = _ask_text("  Short description", default="")
+
+    # Detect image formats present
+    image_extensions = set()
+    for class_dir in class_dirs:
+        for f in class_dir.iterdir():
+            if f.is_file():
+                image_extensions.add(f.suffix.lower())
+
+    metadata = {
+        "name": dataset_dir.name,
+        "task_type": "image_classification",
+        "description": description,
+        "source": source,
+        "created_at": str(date.today()),
+        "features": [],
+        "target": "label",
+        "schema": {},
+        "image_properties": {
+            "expected_formats": sorted(image_extensions),
+            "min_images_per_class": 5,
+        },
+        "constraints": {
+            "min_rows": 10,
+            "max_null_fraction": 0.0,
+            "label_classes": class_names,
+        },
+    }
+
+    output_path = dataset_dir / "dataset.yaml"
+    with open(output_path, "w") as f:
+        yaml.dump(metadata, f, default_flow_style=False, sort_keys=False)
+
+    print(f"  dataset.yaml created for '{dataset_dir.name}'.")
+
+
 def generate_for_dataset(dataset_dir: Path) -> None:
+    # Check for image dataset (has images/ subdirectory with class folders)
+    images_dir = dataset_dir / "images"
+    if images_dir.is_dir() and any(d.is_dir() for d in images_dir.iterdir()):
+        _generate_image_dataset_yaml(dataset_dir)
+        return
+
     csv_path = dataset_dir / "data.csv"
     if not csv_path.exists():
-        print(f"  Skipping {dataset_dir.name} — no data.csv found.")
+        print(f"  Skipping {dataset_dir.name} — no data.csv or images/ found.")
         return
 
     print(f"\nDataset '{dataset_dir.name}' is missing dataset.yaml.")
@@ -50,7 +103,7 @@ def generate_for_dataset(dataset_dir: Path) -> None:
         "Task type",
         {"C": "classification", "R": "regression"}
     )
-    
+
     source = _ask_text("  Source/origin of dataset", default="unknown")
     description = _ask_text("  Short description", default="")
 

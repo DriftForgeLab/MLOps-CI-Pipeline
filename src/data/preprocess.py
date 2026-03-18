@@ -616,10 +616,20 @@ def run_preprocessing(
         ValueError:        If dataset.yaml is malformed, data contract violated,
                            or the pipeline produces unexpected output.
     """
+    # --- Dispatch to image preprocessing if needed ---
+    version_dir = processed_dir / dataset_name / version_id
+    yaml_check_path = version_dir / "dataset.yaml"
+    if yaml_check_path.exists():
+        with open(yaml_check_path) as _f:
+            _meta = yaml.safe_load(_f)
+        if isinstance(_meta, dict) and _meta.get("task_type") == "image_classification":
+            from src.data.image_preprocess import run_image_preprocessing
+            run_image_preprocessing(dataset_name, version_id, prep_config_path, processed_dir)
+            return
+
     # --- Load preprocessing config ---
     prep_config = load_preprocessing_config(prep_config_path)
 
-    version_dir = processed_dir / dataset_name / version_id
     if not version_dir.exists():
         raise FileNotFoundError(
             f"No versioned dataset found at '{version_dir}'. "

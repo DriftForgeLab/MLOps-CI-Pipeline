@@ -22,7 +22,7 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-VALID_TASK_TYPES: frozenset[str] = {"classification", "regression"} #!!! May need to update VALIDATE and REQUIRED to ENUM in later sprints
+VALID_TASK_TYPES: frozenset[str] = {"classification", "regression", "image_classification"} #!!! May need to update VALIDATE and REQUIRED to ENUM in later sprints
 VALID_LOG_LEVELS: frozenset[str] = {"DEBUG", "INFO", "WARNING", "ERROR"}
 VALID_PIPELINE_STAGES: frozenset[str] = {"preprocessing", "training", "evaluation", "deployment", "promotion"} #!!! May need to update the validation of Deploymeny in later sprints
 VALID_ALGORITHMS: frozenset[str] = {"random_forest", "logistic_regression", "linear_regression"}
@@ -121,6 +121,21 @@ class MissingValuesConfig:
     fill_value: object = None
 
 @dataclass(frozen=True)
+class ImageAugmentationConfig:
+    enabled: bool = False
+    horizontal_flip: bool = False
+    rotation_degrees: int = 0
+    augmentation_factor: int = 1  # number of augmented copies per original
+
+@dataclass(frozen=True)
+class ImagePreprocessingConfig:
+    target_size: tuple[int, int] = (64, 64)  # (height, width)
+    color_mode: str = "rgb"                   # "rgb" or "grayscale"
+    normalize: bool = True                     # scale pixels to [0,1]
+    flatten: bool = True                       # flatten to 1D for sklearn
+    augmentation: ImageAugmentationConfig = field(default_factory=ImageAugmentationConfig)
+
+@dataclass(frozen=True)
 class PreprocessingConfig:
     # Data contract enforcement
     fail_on_nulls: bool = True
@@ -135,6 +150,8 @@ class PreprocessingConfig:
     encoding: EncodingConfig = field(default_factory=EncodingConfig)
     scaling: ScalingConfig = field(default_factory=ScalingConfig)
     missing_values: MissingValuesConfig = field(default_factory=MissingValuesConfig)
+    # Image preprocessing (None = not an image dataset)
+    image: ImagePreprocessingConfig | None = None
     
 @dataclass(frozen=True)
 class MLflowConfig:
@@ -687,11 +704,16 @@ def _build_training_config(raw: dict) -> TrainingConfig:
         )
     )
 
+VALID_IMAGE_COLOR_MODES: frozenset[str] = {"rgb", "grayscale"}
+
 _PREPROCESSING_TOP_LEVEL_KEYS: set[str] = {
     "fail_on_nulls", "min_rows", "validate_types", "validate_labels", "validate_on_skip",
     "numeric_features", "categorical_features",
     "encoding", "scaling", "missing_values",
+    "image",
 }
+_IMAGE_KEYS: set[str] = {"target_size", "color_mode", "normalize", "flatten", "augmentation"}
+_IMAGE_AUGMENTATION_KEYS: set[str] = {"enabled", "horizontal_flip", "rotation_degrees", "augmentation_factor"}
 _ENCODING_KEYS: set[str] = {"enabled", "strategy", "handle_unknown", "min_frequency"}
 _SCALING_KEYS: set[str] = {"enabled", "strategy"}
 _MISSING_VALUES_KEYS: set[str] = {"policy", "numeric_strategy", "categorical_strategy", "fill_value"}
@@ -858,7 +880,83 @@ def _validate_preprocessing(raw: dict) -> list[str]:
                         effective_policy,
                     )
 
+    # --- Image preprocessing ---
+    img = raw.get("image")
+    if img is not None:
+        if not isinstance(img, dict):
+            errors.append("'image' must be a mapping")
+        else:
+            extra_img = set(img.keys()) - _IMAGE_KEYS
+            if extra_img:
+                logger.warning(
+                    "Unknown keys in 'image' (possible typo): %s",
+                    ", ".join(sorted(extra_img)),
+                )
+            if "target_size" in img:
+                ts = img["target_size"]
+                if (
+                    not isinstance(ts, list)
+                    or len(ts) != 2
+                    or not all(isinstance(x, int) and x > 0 for x in ts)
+                ):
+                    errors.append(
+                        f"'image.target_size' must be a list of two positive integers, got {ts!r}"
+                    )
+            if "color_mode" in img:
+                _validate_enum(img["color_mode"], VALID_IMAGE_COLOR_MODES, "image.color_mode", errors)
+            for key in ("normalize", "flatten"):
+                if key in img and not isinstance(img[key], bool):
+                    errors.append(f"'image.{key}' must be a boolean, got {type(img[key]).__name__!r}")
+
+            aug = img.get("augmentation")
+            if aug is not None:
+                if not isinstance(aug, dict):
+                    errors.append("'image.augmentation' must be a mapping")
+                else:
+                    extra_aug = set(aug.keys()) - _IMAGE_AUGMENTATION_KEYS
+                    if extra_aug:
+                        logger.warning(
+                            "Unknown keys in 'image.augmentation' (possible typo): %s",
+                            ", ".join(sorted(extra_aug)),
+                        )
+                    for key in ("enabled", "horizontal_flip"):
+                        if key in aug and not isinstance(aug[key], bool):
+                            errors.append(
+                                f"'image.augmentation.{key}' must be a boolean, got {type(aug[key]).__name__!r}"
+                            )
+                    if "rotation_degrees" in aug:
+                        rd = aug["rotation_degrees"]
+                        if isinstance(rd, bool) or not isinstance(rd, int) or rd < 0:
+                            errors.append(
+                                f"'image.augmentation.rotation_degrees' must be a non-negative integer, got {rd!r}"
+                            )
+                    if "augmentation_factor" in aug:
+                        af = aug["augmentation_factor"]
+                        if isinstance(af, bool) or not isinstance(af, int) or af < 1:
+                            errors.append(
+                                f"'image.augmentation.augmentation_factor' must be an integer >= 1, got {af!r}"
+                            )
+
     return errors
+
+
+def _build_image_preprocessing_config(raw: dict | None) -> ImagePreprocessingConfig | None:
+    if raw is None:
+        return None
+    aug_raw = raw.get("augmentation", {}) or {}
+    ts = raw.get("target_size", [64, 64])
+    return ImagePreprocessingConfig(
+        target_size=tuple(ts),
+        color_mode=raw.get("color_mode", "rgb"),
+        normalize=raw.get("normalize", True),
+        flatten=raw.get("flatten", True),
+        augmentation=ImageAugmentationConfig(
+            enabled=aug_raw.get("enabled", False),
+            horizontal_flip=aug_raw.get("horizontal_flip", False),
+            rotation_degrees=aug_raw.get("rotation_degrees", 0),
+            augmentation_factor=aug_raw.get("augmentation_factor", 1),
+        ),
+    )
 
 
 def _build_preprocessing_config(raw: dict) -> PreprocessingConfig:
@@ -899,6 +997,7 @@ def _build_preprocessing_config(raw: dict) -> PreprocessingConfig:
             categorical_strategy=mv.get("categorical_strategy", "most_frequent"),
             fill_value=mv.get("fill_value", None),
         ),
+        image=_build_image_preprocessing_config(raw.get("image")),
     )
 
 

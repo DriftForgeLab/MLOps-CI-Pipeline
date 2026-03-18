@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import joblib
+import numpy as np
 import pandas as pd
 
 from src.config.loader import PipelineConfig, load_evaluation_config, load_promotion_config
@@ -72,16 +73,26 @@ def evaluate(
     target: str = feature_map["target"]
 
     # --- Load val split ---
-    val_path = preprocessed_dir / "val.csv"
-    if not val_path.exists():
-        raise FileNotFoundError(
-            f"Preprocessed val split not found at '{val_path}'. "
-            "Run the preprocessing stage before evaluation."
-        )
-    df = pd.read_csv(val_path)
+    if config.task_type == "image_classification":
+        val_npz_path = preprocessed_dir / "val.npz"
+        if not val_npz_path.exists():
+            raise FileNotFoundError(
+                f"Preprocessed val split not found at '{val_npz_path}'. "
+                "Run the preprocessing stage before evaluation."
+            )
+        data = np.load(val_npz_path)
+        X, y_true = data["X"], data["y"]
+    else:
+        val_path = preprocessed_dir / "val.csv"
+        if not val_path.exists():
+            raise FileNotFoundError(
+                f"Preprocessed val split not found at '{val_path}'. "
+                "Run the preprocessing stage before evaluation."
+            )
+        df = pd.read_csv(val_path)
+        X = df[output_features].values
+        y_true = df[target].values
 
-    X = df[output_features].values
-    y_true = df[target].values
     y_pred = model.predict(X)
 
     # --- Compute metrics ---
@@ -91,7 +102,7 @@ def evaluate(
     promotion_config = load_promotion_config(Path(config.configs.promotion))
     task_config = (
         promotion_config.classification
-        if config.task_type == "classification"
+        if config.task_type in ("classification", "image_classification")
         else promotion_config.regression
     )
     metrics_to_compare = [rule.metric for rule in task_config.rules]
@@ -127,7 +138,7 @@ def evaluate(
 
 def _compute_metrics(y_true, y_pred, task_type: str, eval_config) -> dict:
     """Compute metrics based on task type."""
-    if task_type == "classification":
+    if task_type in ("classification", "image_classification"):
         from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
         avg = eval_config.classification.averaging
         return {
