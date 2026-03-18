@@ -135,6 +135,8 @@ docker run --rm \
   -p 8000:8000 \
   -v "$(pwd)/mlruns:/app/mlruns:ro" \
   -v "$(pwd)/src/config:/app/src/config:ro" \
+  -v "$(pwd)/artifacts:/app/artifacts:ro" \
+  -v "$(pwd)/data/processed:/app/data/processed:ro" \
   -e MLFLOW_TRACKING_URI=/app/mlruns \
   -e PIPELINE_CONFIG_PATH=/app/src/config/pipeline.yaml \
   mlops-prediction-api
@@ -177,11 +179,3 @@ Change the `API_PORT` in `.env`:
 ```
 API_PORT=8001
 ```
-
-### Windows path issues in Docker
-
-If MLflow metadata contains absolute Windows paths (e.g. `C:\Users\...`),
-the container may fail to resolve model artifacts. The startup checks
-module uses the `models:/<name>/Production` URI scheme first (which
-resolves via the registry) and falls back to `runs:/<run_id>/model` if
-needed. If both fail, re-run the pipeline inside WSL or on a Linux host.
