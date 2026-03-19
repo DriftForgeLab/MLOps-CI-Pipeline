@@ -256,18 +256,18 @@ document.getElementById('predict-form').addEventListener('submit', async (e) => 
     } else {
       document.getElementById('result-value').textContent = data.prediction;
       document.getElementById('result-meta').textContent =
-        'Algoritme: ' + data.algorithm +
-        '  ·  Versjon: ' + data.model_version_id +
+        'Algorithm: ' + data.algorithm +
+        '  ·  Version: ' + data.model_version_id +
         '  ·  Type: ' + data.task_type;
     }
   } catch (err) {
     const resultEl = document.getElementById('result');
     resultEl.classList.add('visible');
     document.getElementById('result-value').innerHTML =
-      '<span class="error-text">Nettverksfeil: ' + escHtml(err.message) + '</span>';
+      '<span class="error-text">Network error: ' + escHtml(err.message) + '</span>';
     document.getElementById('result-meta').textContent = '';
   } finally {
-    btn.textContent = 'Kjør prediksjon';
+    btn.textContent = 'Run prediction';
     btn.disabled = false;
   }
 });
