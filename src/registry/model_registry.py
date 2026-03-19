@@ -26,6 +26,7 @@ _REGRESSION_EVAL_KEYS: frozenset[str] = frozenset({"r2", "mae", "mse", "rmse"})
 _EVAL_KEYS_BY_TASK: dict[str, frozenset[str]] = {
     "classification": _CLASSIFICATION_EVAL_KEYS,
     "regression": _REGRESSION_EVAL_KEYS,
+    "image_classification": _CLASSIFICATION_EVAL_KEYS,
     "image_classification_cnn": _CLASSIFICATION_EVAL_KEYS,
 }
 

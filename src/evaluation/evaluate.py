@@ -148,15 +148,20 @@ def evaluate(
 def _compute_metrics(y_true, y_pred, task_type: str, eval_config) -> dict:
     """Compute metrics based on task type."""
     if task_type in ("classification", "image_classification", "image_classification_cnn"):
-        from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+        from sklearn.metrics import (
+            accuracy_score, confusion_matrix, f1_score, precision_score, recall_score,
+        )
         avg = eval_config.classification.averaging
-        return {
+        metrics = {
             "accuracy": round(float(accuracy_score(y_true, y_pred)), 4),
             "precision": round(float(precision_score(y_true, y_pred, average=avg, zero_division=0)), 4),
             "recall": round(float(recall_score(y_true, y_pred, average=avg, zero_division=0)), 4),
             "f1_score": round(float(f1_score(y_true, y_pred, average=avg, zero_division=0)), 4),
             "averaging": avg,
         }
+        if task_type == "image_classification_cnn":
+            metrics["confusion_matrix"] = confusion_matrix(y_true, y_pred).tolist()
+        return metrics
     else:
         import numpy as np
         from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score

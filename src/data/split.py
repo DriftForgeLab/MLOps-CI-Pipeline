@@ -92,7 +92,7 @@ def split_dataset(
     yaml_path = version_dir / "dataset.yaml"
     with open(yaml_path) as f:
         meta = yaml.safe_load(f)
-    if meta.get("task_type") == "image_classification":
+    if meta.get("task_type") in ("image_classification", "image_classification_cnn"):
         from src.data.image_split import split_image_dataset
         split_image_dataset(dataset_name, version_id, random_seed, train_ratio, val_ratio, processed_dir)
         return

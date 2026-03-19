@@ -1,17 +1,17 @@
 # =============================================================================
 # src/deployment/startup_checks.py — Production model validation and loading
 # =============================================================================
-# Responsibility: Ensure that only the approved Production-stage model from
-# the MLflow Model Registry is loaded and served by the prediction service.
+# Responsibility: Ensure that only approved Production-stage models from
+# the MLflow Model Registry are loaded and served by the prediction service.
 #
-# This module is independent of the FastAPI application layer (ID 10).
-# It queries the MLflow registry, loads the model artifact, extracts lineage
-# metadata, and returns a structured result that the API layer can use.
+# This module is independent of the FastAPI application layer.
+# It queries the MLflow registry, loads model artifacts, extracts lineage
+# metadata, and returns structured results that the API layer can use.
 #
 # Governance guarantees:
 #   - Build time:   No model baked into the Docker image.
 #   - Startup:      Only "Production"-stage versions are queried.
-#   - Runtime:      Model loaded once at startup; no dynamic switching.
+#   - Runtime:      Models loaded once at startup; no dynamic switching.
 #   - Traceability: Lineage metadata (run_id, version, algorithm) preserved.
 # =============================================================================
 
@@ -26,7 +26,6 @@ import torch
 from src.config.loader import PipelineConfig, load_config, load_deployment_config
 from src.registry.model_registry import (
     get_mlflow_client,
-    resolve_model_name,
     resolve_tracking_uri,
 )
 
@@ -35,65 +34,92 @@ _logger = logging.getLogger(__name__)
 
 @dataclass
 class ProductionModelInfo:
-    """Metadata and reference for the loaded Production model."""
+    """Metadata and reference for a loaded Production model."""
 
-    model: object                           # The loaded sklearn model object.
+    model: object                           # The loaded sklearn or PyTorch model.
     model_name: str                         # MLflow registry model name.
     model_version: str                      # Registry version number.
     run_id: str                             # MLflow training run ID.
     stage: str                              # Must be "Production".
     algorithm: str                          # From lineage tags.
+    task_type: str                          # From lineage tags.
     trained_at: str                         # From lineage tags.
     dataset_version_id: str                 # From lineage tags.
+    dataset_name: str                       # From run tags.
     promotion_outcome: str                  # From lineage tags.
     feature_names: list[str] = field(default_factory=list)
+    # Image model fields (None for tabular models)
+    image_shape: list | None = None         # [H, W, C] from feature_map
+    normalization_stats: dict | None = None # {"mean": [...], "std": [...]}
+    index_to_class: dict | None = None      # {"0": "cat", "1": "dog"}
 
 
-def load_production_model(config: PipelineConfig) -> ProductionModelInfo:
-    """Load and validate the Production model from the MLflow Model Registry.
+def _find_all_production_versions(client, config: PipelineConfig) -> list[tuple[str, object]]:
+    """Find all Production model versions in the MLflow registry.
 
-    Supports both sklearn models (model.joblib) and PyTorch CNN models (model.pt).
-    Uses the same registry query pattern as get_production_model_metrics but goes
-    further: it loads the actual model artifact and extracts lineage tags
-    so the API can serve predictions with full traceability.
+    Resolution order:
+      1. ``MLFLOW_MODEL_NAME`` env var — look up only that model name.
+      2. Scan all registered models for any with a Production version.
+
+    Returns:
+        List of (model_name, prod_version) tuples, one per Production model.
 
     Raises:
-        RuntimeError: If no Production model exists, the registry is
-            unreachable, or the model artifact cannot be loaded.
+        RuntimeError: If the registry is unreachable or no Production model exists.
     """
-    client = get_mlflow_client(config)
-    model_name = resolve_model_name(config)
+    explicit_name = os.environ.get("MLFLOW_MODEL_NAME")
+    if explicit_name:
+        _logger.info("Using MLFLOW_MODEL_NAME from environment: %s", explicit_name)
+        try:
+            versions = client.get_latest_versions(explicit_name, stages=["Production"])
+        except Exception as exc:
+            raise RuntimeError(
+                f"Cannot query MLflow registry for '{explicit_name}': {exc}"
+            ) from exc
+        if not versions:
+            raise RuntimeError(
+                f"No Production model found in registry for '{explicit_name}'. "
+                "Run the pipeline and approve a model before starting the service."
+            )
+        return [(explicit_name, versions[0])]
 
-    # --- Query the registry for the Production-stage version ----------------
+    # Scan all registered models for Production versions.
     try:
-        versions = client.get_latest_versions(model_name, stages=["Production"])
+        registered = client.search_registered_models()
     except Exception as exc:
         raise RuntimeError(
-            f"Cannot query MLflow Model Registry for '{model_name}': {exc}"
+            f"Cannot search MLflow Model Registry: {exc}"
         ) from exc
 
-    if not versions:
+    found: list[tuple[str, object]] = []
+    for reg_model in registered:
+        try:
+            versions = client.get_latest_versions(reg_model.name, stages=["Production"])
+        except Exception:
+            continue
+        if versions:
+            found.append((reg_model.name, versions[0]))
+
+    if not found:
         raise RuntimeError(
-            f"No Production model found in registry for '{model_name}'. "
-            "Run the pipeline and approve a model before starting the service."
+            "No Production model found anywhere in the MLflow Model Registry. "
+            "Run the pipeline and approve a model before starting the service. "
+            "To target a specific model, set the MLFLOW_MODEL_NAME environment variable."
         )
 
-    if len(versions) > 1:
-        _logger.warning(
-            "Found %d Production versions for '%s' — using version %s.",
-            len(versions), model_name, versions[0].version,
-        )
+    return found
 
-    prod_version = versions[0]
-    _logger.info(
-        "Found Production model: name=%s version=%s run_id=%s",
-        model_name, prod_version.version, prod_version.run_id,
-    )
 
-    # --- Extract lineage tags from the model version -----------------------
+def _load_single_production_model(
+    client, model_name: str, prod_version
+) -> ProductionModelInfo:
+    """Load a single Production model artifact and recover its feature map.
+
+    Raises:
+        RuntimeError: If the model artifact or required run tags are missing.
+    """
     tags = prod_version.tags or {}
 
-    # --- Load the model artifact from local artifact store -----------------
     run = client.get_run(prod_version.run_id)
     version_id = run.data.tags.get("pipeline.dataset_version_id", "")
     if not version_id:
@@ -101,6 +127,9 @@ def load_production_model(config: PipelineConfig) -> ProductionModelInfo:
             f"Could not find 'pipeline.dataset_version_id' tag on run '{prod_version.run_id}'."
         )
 
+    dataset_name = run.data.tags.get("pipeline.dataset", "")
+
+    # --- Load model artifact ------------------------------------------------
     model_dir = Path("artifacts/runs") / version_id / "model"
     pt_path = model_dir / "model.pt"
     joblib_path = model_dir / "model.joblib"
@@ -117,10 +146,12 @@ def load_production_model(config: PipelineConfig) -> ProductionModelInfo:
             "The registry pointer may be stale or artifacts may have been deleted."
         )
 
-    # --- Recover feature names from feature_map.json -----------------------
+    # --- Recover feature map fields -----------------------------------------
     feature_names: list[str] = []
+    image_shape: list | None = None
+    normalization_stats: dict | None = None
+    index_to_class: dict | None = None
     try:
-        dataset_name = run.data.tags.get("pipeline.dataset", "")
         feature_map_path = (
             Path("data/processed") / dataset_name / version_id / "preprocessed" / "feature_map.json"
         )
@@ -128,7 +159,13 @@ def load_production_model(config: PipelineConfig) -> ProductionModelInfo:
             with open(feature_map_path) as f:
                 feature_map = json.load(f)
             feature_names = feature_map.get("output_features", [])
-            _logger.info("Feature names recovered: %s", feature_names)
+            image_shape = feature_map.get("image_shape")
+            normalization_stats = feature_map.get("normalization_stats")
+            index_to_class = feature_map.get("index_to_class")
+            _logger.info(
+                "Feature map loaded for '%s': image_shape=%s features=%d",
+                model_name, image_shape, len(feature_names),
+            )
         else:
             _logger.warning(
                 "feature_map.json not found at %s — input validation will be skipped.",
@@ -136,7 +173,8 @@ def load_production_model(config: PipelineConfig) -> ProductionModelInfo:
             )
     except Exception:
         _logger.warning(
-            "Could not recover feature names — input validation will be skipped."
+            "Could not recover feature map for '%s' — input validation will be skipped.",
+            model_name,
         )
 
     return ProductionModelInfo(
@@ -146,11 +184,50 @@ def load_production_model(config: PipelineConfig) -> ProductionModelInfo:
         run_id=prod_version.run_id,
         stage="Production",
         algorithm=tags.get("lineage.algorithm", "unknown"),
+        task_type=tags.get("lineage.task_type", "unknown"),
         trained_at=tags.get("lineage.trained_at", "unknown"),
         dataset_version_id=tags.get("lineage.dataset_version_id", "unknown"),
+        dataset_name=dataset_name,
         promotion_outcome=tags.get("lineage.promotion_outcome", "unknown"),
         feature_names=feature_names,
+        image_shape=image_shape,
+        normalization_stats=normalization_stats,
+        index_to_class=index_to_class,
     )
+
+
+def load_all_production_models(config: PipelineConfig) -> dict[str, ProductionModelInfo]:
+    """Load all Production models from the MLflow registry.
+
+    Returns a dict keyed by MLflow model name. Models that fail to load are
+    logged as errors and skipped — the API will start as long as at least
+    one model loads successfully.
+
+    Raises:
+        RuntimeError: If no models could be loaded at all.
+    """
+    client = get_mlflow_client(config)
+    prod_versions = _find_all_production_versions(client, config)
+
+    models: dict[str, ProductionModelInfo] = {}
+    for model_name, prod_version in prod_versions:
+        try:
+            info = _load_single_production_model(client, model_name, prod_version)
+            models[model_name] = info
+            _logger.info(
+                "Loaded Production model: '%s' version=%s algorithm=%s",
+                model_name, info.model_version, info.algorithm,
+            )
+        except Exception as exc:
+            _logger.error("Failed to load model '%s': %s", model_name, exc)
+
+    if not models:
+        raise RuntimeError(
+            "No Production models could be loaded. "
+            "Check that model artifacts exist and that run tags are complete."
+        )
+
+    return models
 
 
 def validate_environment() -> PipelineConfig:
@@ -159,7 +236,7 @@ def validate_environment() -> PipelineConfig:
     Checks that the pipeline config and deployment config can be loaded
     and that the MLflow tracking store is accessible.
 
-    Returns the loaded PipelineConfig for use by ``load_production_model``.
+    Returns the loaded PipelineConfig for use by ``load_all_production_models``.
 
     Raises:
         RuntimeError: If any required configuration is missing or invalid.
@@ -180,7 +257,6 @@ def validate_environment() -> PipelineConfig:
     except (FileNotFoundError, ValueError) as exc:
         raise RuntimeError(f"Failed to load pipeline config: {exc}") from exc
 
-    # Validate that the deployment config is also loadable.
     deploy_config_path = Path(config.configs.deployment)
     if not deploy_config_path.exists():
         raise RuntimeError(
@@ -190,11 +266,8 @@ def validate_environment() -> PipelineConfig:
     try:
         deploy_config = load_deployment_config(deploy_config_path)
     except (FileNotFoundError, ValueError) as exc:
-        raise RuntimeError(
-            f"Failed to load deployment config: {exc}"
-        ) from exc
+        raise RuntimeError(f"Failed to load deployment config: {exc}") from exc
 
-    # Verify the tracking URI is reachable (basic sanity check).
     tracking_uri = resolve_tracking_uri(config)
     _logger.info("MLflow tracking URI: %s", tracking_uri)
 
