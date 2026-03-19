@@ -24,6 +24,7 @@ def _write_minimal_config(tmp_path: Path, mlflow_block: str = "") -> Path:
         "  training: src/config/training_classification.yaml\n"
         "  evaluation: src/config/evaluation.yaml\n"
         "  deployment: src/config/deployment.yaml\n"
+        "  promotion: src/config/promotion.yaml\n"
         "log_level: INFO\n"
     )
     if mlflow_block:

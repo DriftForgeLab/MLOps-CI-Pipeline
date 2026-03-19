@@ -69,6 +69,7 @@ def _log_fake_model_artifact(tmp_path: Path, run_id_ref: list) -> str:
     joblib.dump(model, model_dir / "model.joblib")
     (model_dir / "metadata.json").write_text('{"algorithm":"random_forest"}')
 
+    mlflow.set_experiment("test")
     with mlflow.start_run() as run:
         mlflow.log_params({
             "algorithm": "random_forest",

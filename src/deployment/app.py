@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
 
-from src.deployment.startup_checks import validate_environment, load_production_model
+from src.deployment.startup_checks import validate_environment, load_all_production_models
 from src.deployment.routes import router
 
 logger = logging.getLogger(__name__)
@@ -22,14 +22,14 @@ _state: dict = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Validate environment and load the production model once at startup."""
+    """Validate environment and load all Production models once at startup."""
     config = validate_environment()
-    model_info = load_production_model(config)
-    _state["model_info"] = model_info
+    models = load_all_production_models(config)
+    _state["models"] = models
     logger.info(
-        "API startup complete — serving model '%s' version %s.",
-        model_info.model_name,
-        model_info.model_version,
+        "API startup complete — %d Production model(s) loaded: %s",
+        len(models),
+        list(models.keys()),
     )
     yield
     _state.clear()

@@ -22,7 +22,13 @@ _WITH_COMPARISON = {
     "comparison": {
         "has_production_model": True,
         "is_better": True,
-        "delta": {"accuracy": 0.03, "precision": 0.02, "recall": 0.01, "f1_score": 0.025},
+        "overall_verdict": "better",
+        "per_metric": {
+            "accuracy":  {"delta": 0.03,  "verdict": "better"},
+            "precision": {"delta": 0.02,  "verdict": "better"},
+            "recall":    {"delta": 0.01,  "verdict": "better"},
+            "f1_score":  {"delta": 0.025, "verdict": "better"},
+        },
     },
 }
 _NO_PRODUCTION = {
