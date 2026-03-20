@@ -263,6 +263,97 @@ def test_pipeline_pkl_written(tmp_path):
     assert (base / "myimages" / vid / "preprocessed" / "pipeline.pkl").exists()
 
 
+# ---------------------------------------------------------------------------
+# Negative-path: corrupted / unreadable images
+# ---------------------------------------------------------------------------
+
+def test_corrupted_images_are_skipped(tmp_path):
+    """Corrupted images should be skipped; valid ones still processed."""
+    base, vid = _make_split_image_dataset(tmp_path)
+
+    # Inject a corrupted file into the train/images/cats directory
+    corrupt_dir = base / "myimages" / vid / "train" / "images" / "cats"
+    (corrupt_dir / "corrupt_001.png").write_bytes(b"NOT_A_PNG_FILE")
+
+    prep_cfg = _write_prep_config(tmp_path)
+    run_image_preprocessing("myimages", vid, prep_cfg, processed_dir=base)
+
+    # Should still succeed — valid images remain
+    data = np.load(base / "myimages" / vid / "preprocessed" / "train.npz")
+    assert data["X"].shape[0] > 0, "Valid images should still be processed"
+
+
+def test_all_corrupted_images_raises(tmp_path):
+    """If every image is corrupted, preprocessing should raise ValueError."""
+    version_dir = tmp_path / "broken" / "v1"
+
+    # Create a minimal dataset with ONLY corrupted images
+    for split_name in ("train", "val", "test"):
+        class_dir = version_dir / split_name / "images" / "cats"
+        class_dir.mkdir(parents=True)
+        (class_dir / "bad_001.png").write_bytes(b"GARBAGE")
+        (class_dir / "bad_002.png").write_bytes(b"\x00\x01\x02")
+
+        meta_dir = version_dir / split_name
+        with open(meta_dir / "metadata.json", "w") as f:
+            json.dump({"random_seed": 42, "split": split_name}, f)
+
+    meta = {
+        "name": "broken",
+        "task_type": "image_classification",
+        "features": [],
+        "target": "label",
+        "schema": {},
+        "image_properties": {"expected_formats": [".png"], "min_images_per_class": 1},
+        "constraints": {"min_rows": 1, "max_null_fraction": 0.0, "label_classes": ["cats"]},
+    }
+    with open(version_dir / "dataset.yaml", "w") as f:
+        yaml.dump(meta, f)
+
+    prep_cfg = _write_prep_config(tmp_path)
+    with pytest.raises(ValueError, match="No readable images"):
+        run_image_preprocessing("broken", "v1", prep_cfg, processed_dir=tmp_path)
+
+
+def test_empty_image_directory_raises(tmp_path):
+    """A split with no images at all should raise ValueError."""
+    version_dir = tmp_path / "empty" / "v1"
+
+    for split_name in ("train", "val", "test"):
+        # Create class directory but put no images in it
+        (version_dir / split_name / "images" / "cats").mkdir(parents=True)
+        with open(version_dir / split_name / "metadata.json", "w") as f:
+            json.dump({"random_seed": 42, "split": split_name}, f)
+
+    meta = {
+        "name": "empty",
+        "task_type": "image_classification",
+        "features": [],
+        "target": "label",
+        "schema": {},
+        "image_properties": {"expected_formats": [".png"], "min_images_per_class": 1},
+        "constraints": {"min_rows": 1, "max_null_fraction": 0.0, "label_classes": ["cats"]},
+    }
+    with open(version_dir / "dataset.yaml", "w") as f:
+        yaml.dump(meta, f)
+
+    prep_cfg = _write_prep_config(tmp_path)
+    with pytest.raises(ValueError, match="No images found"):
+        run_image_preprocessing("empty", "v1", prep_cfg, processed_dir=tmp_path)
+
+
+def test_normalization_values_are_close_to_zero_mean(tmp_path):
+    """After normalization, training data should be approximately zero-mean."""
+    base, vid = _make_split_image_dataset(tmp_path)
+    prep_cfg = _write_prep_config(tmp_path)
+    run_image_preprocessing("myimages", vid, prep_cfg, processed_dir=base)
+
+    data = np.load(base / "myimages" / vid / "preprocessed" / "train.npz")
+    X = data["X"]
+    # Zero-mean normalization: mean should be close to 0
+    np.testing.assert_allclose(X.mean(), 0.0, atol=0.5)
+
+
 def test_idempotent_skip(tmp_path):
     base, vid = _make_split_image_dataset(tmp_path)
     prep_cfg = _write_prep_config(tmp_path)

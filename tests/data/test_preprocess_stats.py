@@ -199,3 +199,54 @@ def test_feature_stats_contain_mean_std_min_max(tmp_path):
         if col in stats:
             for key in ["mean", "std", "min", "max"]:
                 assert key in stats[col], f"feature_stats['{col}'] missing '{key}'"
+
+
+def test_feature_stats_values_are_mathematically_correct(tmp_path):
+    """Verify that computed mean/std/min/max match pandas calculations on raw data.
+
+    Train data column 'b' = [0,1,2,...,9] — no nulls, so stats are deterministic.
+    The source rounds to 6 decimal places.
+    """
+    version_dir = _build_version_dir_with_nulls(tmp_path, ["a", "b"], "label")
+    prep_cfg = _write_prep_config(tmp_path)
+    run_preprocessing("iris", "statver", prep_config_path=prep_cfg, processed_dir=tmp_path)
+    meta = _load_meta(version_dir)
+
+    stats = meta["splits"]["train"]["feature_stats"]
+
+    # Column "b" has values [0..9] with no nulls — straightforward to verify
+    col_b = pd.Series([float(i) for i in range(10)])
+    assert stats["b"]["mean"] == round(float(col_b.mean()), 6)
+    assert stats["b"]["std"] == round(float(col_b.std()), 6)
+    assert stats["b"]["min"] == round(float(col_b.min()), 6)
+    assert stats["b"]["max"] == round(float(col_b.max()), 6)
+
+
+def test_feature_stats_with_null_column(tmp_path):
+    """Column 'a' has one NaN — mean/std should reflect the 9 non-null values."""
+    version_dir = _build_version_dir_with_nulls(tmp_path, ["a", "b"], "label")
+    prep_cfg = _write_prep_config(tmp_path)
+    run_preprocessing("iris", "statver", prep_config_path=prep_cfg, processed_dir=tmp_path)
+    meta = _load_meta(version_dir)
+
+    stats = meta["splits"]["train"]["feature_stats"]
+
+    # Column "a" train data: [NaN, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    col_a = pd.Series([float("nan"), 1, 2, 3, 4, 5, 6, 7, 8, 9])
+    assert stats["a"]["mean"] == round(float(col_a.mean()), 6)
+    assert stats["a"]["std"] == round(float(col_a.std()), 6)
+    assert stats["a"]["min"] == round(float(col_a.min()), 6)
+    assert stats["a"]["max"] == round(float(col_a.max()), 6)
+
+
+def test_label_distribution_values_match_counts(tmp_path):
+    """Label distribution should contain actual counts, not just key presence."""
+    version_dir = _build_version_dir_with_nulls(tmp_path, ["a", "b"], "label")
+    prep_cfg = _write_prep_config(tmp_path)
+    run_preprocessing("iris", "statver", prep_config_path=prep_cfg, processed_dir=tmp_path)
+    meta = _load_meta(version_dir)
+
+    dist = meta["splits"]["train"]["label_distribution"]
+    # Train data has 5 "setosa" and 5 "versicolor"
+    assert dist["setosa"] == 5
+    assert dist["versicolor"] == 5

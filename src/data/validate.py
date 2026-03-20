@@ -113,7 +113,7 @@ def validate_dataset(dataset_name: str, version_id: str, processed_dir: Path = P
             ", ".join(sorted(extra_top)),
         )
 
-    if metadata.get("task_type") not in {"classification", "regression", "image_classification"}:
+    if metadata.get("task_type") not in {"classification", "regression", "image_classification", "image_classification_cnn"}:
         errors.append(f"Invalid task_type '{metadata.get('task_type')}' — must be classification, regression, or image_classification")
 
     if errors:

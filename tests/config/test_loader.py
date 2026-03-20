@@ -170,56 +170,50 @@ class TestValidateEnum:
 from src.config.loader import _validate_positive_int
 
 class TestValidatePositiveInt:
-    def test_valid_positive_int(self):
+    @pytest.mark.parametrize("value", [1, 10, 100, 999])
+    def test_valid_positive_int(self, value):
         errors = []
-        _validate_positive_int(10, "n_estimators", errors)
+        _validate_positive_int(value, "n_estimators", errors)
         assert errors == []
 
-    def test_zero_is_invalid(self):
+    @pytest.mark.parametrize(
+        "value, label",
+        [
+            (0, "zero"),
+            (-1, "negative"),
+            (True, "bool_true"),
+            (False, "bool_false"),
+            (1.5, "float"),
+            (None, "none"),
+        ],
+        ids=lambda x: x if isinstance(x, str) else repr(x),
+    )
+    def test_invalid_values_rejected(self, value, label):
         errors = []
-        _validate_positive_int(0, "n_estimators", errors)
+        _validate_positive_int(value, "n_estimators", errors)
         assert len(errors) == 1
         assert "n_estimators" in errors[0]
-
-    def test_negative_is_invalid(self):
-        errors = []
-        _validate_positive_int(-1, "n_estimators", errors)
-        assert len(errors) == 1
-
-    def test_bool_true_is_invalid(self):
-        errors = []
-        _validate_positive_int(True, "n_estimators", errors)
-        assert len(errors) == 1
-
-    def test_bool_false_is_invalid(self):
-        errors = []
-        _validate_positive_int(False, "n_estimators", errors)
-        assert len(errors) == 1
-
-    def test_float_is_invalid(self):
-        errors = []
-        _validate_positive_int(1.5, "n_estimators", errors)
-        assert len(errors) == 1
-
-    def test_none_disallowed_by_default(self):
-        errors = []
-        _validate_positive_int(None, "n_estimators", errors)
-        assert len(errors) == 1
 
     def test_none_allowed_when_allow_null_true(self):
         errors = []
         _validate_positive_int(None, "max_depth", errors, allow_null=True)
         assert errors == []
 
-    def test_min_val_enforced(self):
+    @pytest.mark.parametrize(
+        "value, min_val, should_pass",
+        [
+            (1, 2, False),
+            (2, 2, True),
+            (3, 2, True),
+        ],
+    )
+    def test_min_val_boundary(self, value, min_val, should_pass):
         errors = []
-        _validate_positive_int(1, "min_samples_split", errors, min_val=2)
-        assert len(errors) == 1
-
-    def test_exactly_min_val_is_valid(self):
-        errors = []
-        _validate_positive_int(2, "min_samples_split", errors, min_val=2)
-        assert errors == []
+        _validate_positive_int(value, "min_samples_split", errors, min_val=min_val)
+        if should_pass:
+            assert errors == []
+        else:
+            assert len(errors) == 1
 
 
 # ---------------------------------------------------------------------------
