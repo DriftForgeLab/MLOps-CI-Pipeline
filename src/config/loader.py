@@ -91,7 +91,7 @@ class LinearRegressionHyperparams:
 @dataclass(frozen=True)
 class ModelConfig:
     algorithm: str
-    hyperparameters: RandomForestHyperparams | LogisticRegressionHyperparams
+    hyperparameters: RandomForestHyperparams | LogisticRegressionHyperparams | LinearRegressionHyperparams
 
 @dataclass(frozen=True)
 class TrainingConfig:
@@ -243,13 +243,26 @@ def load_promotion_config(path: Path) -> PromotionConfig:
     )
 
 
+_REQUIRED_RULE_KEYS: frozenset[str] = frozenset({"id", "metric", "threshold", "operator"})
+
+
 def _build_promotion_task_config(raw: dict) -> PromotionTaskConfig:
     errors: list[str] = []
     rules = []
-    for rule in raw.get("rules", []):
-        if "operator" in rule and rule["operator"] not in VALID_OPERATORS:
+    for i, rule in enumerate(raw.get("rules", [])):
+        if not isinstance(rule, dict):
+            errors.append(f"Rule at index {i}: must be a mapping, got {type(rule).__name__}")
+            continue
+        missing = _REQUIRED_RULE_KEYS - rule.keys()
+        if missing:
             errors.append(
-                f"Rule '{rule.get('id')}': invalid operator '{rule['operator']}' "
+                f"Rule at index {i} (id={rule.get('id', '?')}): "
+                f"missing required keys: {', '.join(sorted(missing))}"
+            )
+            continue
+        if rule["operator"] not in VALID_OPERATORS:
+            errors.append(
+                f"Rule '{rule['id']}': invalid operator '{rule['operator']}' "
                 f"— must be one of {sorted(VALID_OPERATORS)}"
             )
             continue
@@ -479,8 +492,8 @@ def _validate_section(
 def _validate(raw: dict) -> list[str]:
     """
     Validate raw config dict against the schema contract.
-    
-    Returns a list of error strings. An empty list means the training config is valid.
+
+    Returns a list of error strings. An empty list means the pipeline config is valid.
     """
     errors = []
     
@@ -495,7 +508,7 @@ def _validate(raw: dict) -> list[str]:
     if "task_type" in raw:
         _validate_enum(raw["task_type"], VALID_TASK_TYPES, "task_type", errors)
         
-    if "random_seed" in raw and not isinstance(raw["random_seed"], int):
+    if "random_seed" in raw and (isinstance(raw["random_seed"], bool) or not isinstance(raw["random_seed"], int)):
         errors.append(
             f"random_seed must be an integer, got {type(raw['random_seed']).__name__}"
             )
@@ -606,6 +619,7 @@ def _validate_training(raw: dict) -> list[str]:
     missing_model = REQUIRED_MODEL_KEYS - model.keys()
     if missing_model:
         errors.append(f"Missing required keys in 'model': {', '.join(sorted(missing_model))}")
+        return errors  # Cannot validate further without required keys
 
     extra_model = model.keys() - REQUIRED_MODEL_KEYS
     if extra_model:
@@ -668,6 +682,13 @@ def _validate_training(raw: dict) -> list[str]:
         if "class_weight" in hp and hp["class_weight"] is not None:
             _validate_enum(hp["class_weight"], VALID_CLASS_WEIGHTS, "class_weight", errors)
 
+    elif algorithm == "linear_regression":
+        if hp:
+            logger.warning(
+                "Hyperparameters provided for linear_regression will be ignored: %s",
+                ", ".join(sorted(hp.keys())),
+            )
+
     return errors
 
 def _build_training_config(raw: dict) -> TrainingConfig:
@@ -689,13 +710,15 @@ def _build_training_config(raw: dict) -> TrainingConfig:
             min_samples_split=hp.get("min_samples_split", 2),
             class_weight=hp.get("class_weight", None),
         )
-    else:  # logistic_regression
+    elif algorithm == "logistic_regression":
         hyperparams = LogisticRegressionHyperparams(
             C=hp.get("C", 1.0),
             solver=hp.get("solver", "lbfgs"),
             max_iter=hp.get("max_iter", 200),
             class_weight=hp.get("class_weight", None),
         )
+    else:  # linear_regression
+        hyperparams = LinearRegressionHyperparams()
 
     return TrainingConfig(
         model=ModelConfig(
@@ -897,7 +920,7 @@ def _validate_preprocessing(raw: dict) -> list[str]:
                 if (
                     not isinstance(ts, list)
                     or len(ts) != 2
-                    or not all(isinstance(x, int) and x > 0 for x in ts)
+                    or not all(isinstance(x, int) and not isinstance(x, bool) and x > 0 for x in ts)
                 ):
                     errors.append(
                         f"'image.target_size' must be a list of two positive integers, got {ts!r}"
