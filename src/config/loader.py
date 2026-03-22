@@ -15,479 +15,94 @@
 # sees every problem in one pass rather than fixing them one at a time.
 # =============================================================================
 
-from dataclasses import dataclass, field
-from pathlib import Path
 import logging
-import yaml
+from pathlib import Path
+
+# --- Types layer (dataclasses + constants) ---
+from src.config.schema import (
+    # Pipeline constants
+    VALID_TASK_TYPES,
+    VALID_LOG_LEVELS,
+    VALID_PIPELINE_STAGES,
+    VALID_ALGORITHMS,
+    VALID_SOLVERS,
+    VALID_CLASS_WEIGHTS,
+    REQUIRED_MODEL_KEYS,
+    RF_HYPERPARAMS_KEYS,
+    LR_HYPERPARAMS_KEYS,
+    REQUIRED_TOP_LEVEL_KEYS,
+    # Preprocessing constants
+    VALID_ENCODING_STRATEGIES,
+    VALID_HANDLE_UNKNOWN,
+    VALID_SCALING_STRATEGIES,
+    VALID_MISSING_POLICIES,
+    VALID_NUMERIC_IMPUTE_STRATEGIES,
+    VALID_CATEGORICAL_IMPUTE_STRATEGIES,
+    VALID_IMAGE_COLOR_MODES,
+    REQUIRED_PROJECT_KEYS,
+    REQUIRED_DATA_KEYS,
+    REQUIRED_CONFIGS_KEYS,
+    _PREPROCESSING_TOP_LEVEL_KEYS,
+    _IMAGE_KEYS,
+    _IMAGE_AUGMENTATION_KEYS,
+    _ENCODING_KEYS,
+    _SCALING_KEYS,
+    _MISSING_VALUES_KEYS,
+    # Promotion constants
+    VALID_OPERATORS,
+    _REQUIRED_RULE_KEYS,
+    # Deployment constants
+    VALID_SERVER_LOG_LEVELS,
+    VALID_MODEL_STAGES,
+    # Pipeline dataclasses
+    ProjectMeta,
+    DataPaths,
+    SubConfigPaths,
+    RandomForestHyperparams,
+    LogisticRegressionHyperparams,
+    LinearRegressionHyperparams,
+    ModelConfig,
+    TrainingConfig,
+    MLflowConfig,
+    PipelineConfig,
+    # Preprocessing dataclasses
+    EncodingConfig,
+    ScalingConfig,
+    MissingValuesConfig,
+    ImageAugmentationConfig,
+    ImagePreprocessingConfig,
+    PreprocessingConfig,
+    # Evaluation dataclasses
+    ClassificationEvalConfig,
+    RegressionEvalConfig,
+    EvaluationConfig,
+    # Promotion dataclasses
+    PromotionRule,
+    PromotionTaskConfig,
+    PromotionConfig,
+    # Deployment dataclasses
+    ServerConfig,
+    ModelServingConfig,
+    HealthcheckConfig,
+    DeploymentConfig,
+)
+
+# --- Helpers layer (validation primitives) ---
+from src.config.validation import (
+    _load_yaml,
+    _validate_positive_int,
+    _validate_enum,
+    _validate_section,
+    _validate_bool,
+    _validate_optional_section,
+)
 
 logger = logging.getLogger(__name__)
 
-VALID_TASK_TYPES: frozenset[str] = {"classification", "regression", "image_classification", "image_classification_cnn"} #!!! May need to update VALIDATE and REQUIRED to ENUM in later sprints
-VALID_LOG_LEVELS: frozenset[str] = {"DEBUG", "INFO", "WARNING", "ERROR"}
-VALID_PIPELINE_STAGES: frozenset[str] = {"preprocessing", "training", "evaluation", "deployment", "promotion"} #!!! May need to update the validation of Deploymeny in later sprints
-VALID_ALGORITHMS: frozenset[str] = {"random_forest", "logistic_regression", "linear_regression"}
-VALID_SOLVERS: frozenset[str] = {"lbfgs", "saga", "liblinear"}
-VALID_CLASS_WEIGHTS: frozenset[str] = {"balanced"} ## May need other weights later
 
-REQUIRED_MODEL_KEYS: frozenset[str] = {"algorithm", "hyperparameters"}
-RF_HYPERPARAMS_KEYS: frozenset[str] = {"n_estimators", "max_depth", "min_samples_split", "class_weight"}
-LR_HYPERPARAMS_KEYS: frozenset[str] = {"C", "solver", "max_iter", "class_weight"}
-
-REQUIRED_TOP_LEVEL_KEYS: frozenset[str] = {"project", "task_type", "random_seed", "pipeline_stages", "output_dir", "data", "configs", "log_level", "dataset"}
-
-# Preprocessing config validation constants
-VALID_ENCODING_STRATEGIES: frozenset[str] = {"onehot", "ordinal"}
-VALID_HANDLE_UNKNOWN: frozenset[str] = {"ignore", "error"}
-VALID_SCALING_STRATEGIES: frozenset[str] = {"standard", "minmax"}
-VALID_MISSING_POLICIES: frozenset[str] = {"passthrough", "fail", "impute"}
-VALID_NUMERIC_IMPUTE_STRATEGIES: frozenset[str] = {"mean", "median", "constant"}
-VALID_CATEGORICAL_IMPUTE_STRATEGIES: frozenset[str] = {"most_frequent", "constant"}
-REQUIRED_PROJECT_KEYS: frozenset[str] = {"name", "version"}
-REQUIRED_DATA_KEYS: frozenset[str] = {"raw", "processed", "evaluation", "drift_scenarios"}
-REQUIRED_CONFIGS_KEYS: frozenset[str] = {"preprocessing", "training", "evaluation", "deployment", "promotion"}
-
-# frozen=True because the pipeline must be reproducible. Immutability prevents
-# any module from accidentally mutating config during execution, which would
-# break traceability (you could no longer know what config produced a result).
-
-@dataclass(frozen=True)
-class ProjectMeta:
-    name: str
-    version: str
-
-@dataclass(frozen=True)
-class DataPaths:
-    raw: str
-    processed: str
-    evaluation: str
-    drift_scenarios: str
-
-@dataclass(frozen=True)
-class SubConfigPaths:
-    preprocessing: str
-    training: str
-    evaluation: str
-    promotion: str
-    deployment: str
-    
-@dataclass(frozen=True)
-class RandomForestHyperparams: ### Remember to change this DataCalss if Training_Classification.yaml is updated in later sprints
-    n_estimators: int = 100
-    max_depth: int | None = None
-    min_samples_split: int = 2
-    class_weight: str | None = None
-    
-@dataclass(frozen=True)
-class LogisticRegressionHyperparams: ### Remember to change this DataCalss if Training_Regression.yaml is updated in later sprints
-    C: float = 1.0
-    solver: str = "lbfgs"
-    max_iter: int = 200
-    class_weight: str | None = None
-    
-@dataclass(frozen=True)
-class LinearRegressionHyperparams:
-    pass
-    
-@dataclass(frozen=True)
-class ModelConfig:
-    algorithm: str
-    hyperparameters: RandomForestHyperparams | LogisticRegressionHyperparams | LinearRegressionHyperparams
-
-@dataclass(frozen=True)
-class TrainingConfig:
-    model: ModelConfig
-
-# ---------------------------------------------------------------------------
-# Preprocessing config dataclasses
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class EncodingConfig:
-    enabled: bool = False
-    strategy: str = "onehot"
-    handle_unknown: str = "ignore"
-    min_frequency: int | None = None
-
-@dataclass(frozen=True)
-class ScalingConfig:
-    enabled: bool = False
-    strategy: str = "standard"
-
-@dataclass(frozen=True)
-class MissingValuesConfig:
-    policy: str = "passthrough"
-    numeric_strategy: str = "mean"
-    categorical_strategy: str = "most_frequent"
-    fill_value: object = None
-
-@dataclass(frozen=True)
-class ImageAugmentationConfig:
-    enabled: bool = False
-    horizontal_flip: bool = False
-    rotation_degrees: int = 0
-    augmentation_factor: int = 1  # number of augmented copies per original
-
-@dataclass(frozen=True)
-class ImagePreprocessingConfig:
-    target_size: tuple[int, int] = (64, 64)  # (height, width)
-    color_mode: str = "rgb"                   # "rgb" or "grayscale"
-    normalize: bool = True                     # scale pixels to [0,1]
-    flatten: bool = True                       # flatten to 1D for sklearn
-    augmentation: ImageAugmentationConfig = field(default_factory=ImageAugmentationConfig)
-
-@dataclass(frozen=True)
-class PreprocessingConfig:
-    # Data contract enforcement
-    fail_on_nulls: bool = True
-    min_rows: int = 10
-    validate_types: bool = True
-    validate_labels: bool = True
-    validate_on_skip: bool = False
-    # Feature type overrides (None = auto-detect from schema)
-    numeric_features: tuple[str, ...] | None = None
-    categorical_features: tuple[str, ...] | None = None
-    # Transform policies
-    encoding: EncodingConfig = field(default_factory=EncodingConfig)
-    scaling: ScalingConfig = field(default_factory=ScalingConfig)
-    missing_values: MissingValuesConfig = field(default_factory=MissingValuesConfig)
-    # Image preprocessing (None = not an image dataset)
-    image: ImagePreprocessingConfig | None = None
-    
-@dataclass(frozen=True)
-class MLflowConfig:
-    tracking_uri: str | None = None
-    experiment_name: str | None = None
-    registry_model_name: str | None = None
-
-@dataclass(frozen=True)
-class PipelineConfig:
-    project: ProjectMeta
-    task_type: str
-    random_seed: int
-    pipeline_stages: tuple[str, ...]
-    output_dir: str
-    data: DataPaths
-    configs: SubConfigPaths
-    log_level: str
-    dataset: str
-    mlflow: MLflowConfig = field(default_factory=MLflowConfig)
-    
-
-
-# ---------------------------------------------------------------------------
-# Evaluation config dataclasses and loader
-# ---------------------------------------------------------------------------
-    
-@dataclass(frozen=True)
-class ClassificationEvalConfig:
-    averaging: str = "weighted"
-
-@dataclass(frozen=True) ### This dataclass is currently empty
-class RegressionEvalConfig:
-    pass
-
-@dataclass(frozen=True)
-class EvaluationConfig:
-    classification: ClassificationEvalConfig = field(default_factory=ClassificationEvalConfig)
-    regression: RegressionEvalConfig = field(default_factory=RegressionEvalConfig)
-
-
-def load_evaluation_config(path: Path) -> EvaluationConfig:
-    raw = _load_yaml(path)
-    cls_raw = raw.get("classification", {}) or {}
-    averaging = cls_raw.get("averaging", "weighted")
-    if averaging not in {"weighted", "macro", "binary"}:
-        raise ValueError(
-            f"Invalid averaging strategy '{averaging}' — must be weighted, macro, or binary."
-        )
-    return EvaluationConfig(
-        classification=ClassificationEvalConfig(averaging=averaging),
-        regression=RegressionEvalConfig(),
-    )
-    
-
-
-# ---------------------------------------------------------------------------
-# Promotion config dataclasses and loader
-# ---------------------------------------------------------------------------
-
-    
-@dataclass(frozen=True)
-class PromotionRule:
-    id: str
-    metric: str
-    threshold: float
-    operator: str
-    description: str
-
-
-@dataclass(frozen=True)
-class PromotionTaskConfig:
-    rules: tuple[PromotionRule, ...]
-
-
-@dataclass(frozen=True)
-class PromotionConfig:
-    classification: PromotionTaskConfig
-    regression: PromotionTaskConfig
-
-
-VALID_OPERATORS = {">=", "<=", ">", "<", "=="}
-
-
-def load_promotion_config(path: Path) -> PromotionConfig:
-    raw = _load_yaml(path)
-    return PromotionConfig(
-        classification=_build_promotion_task_config(raw.get("classification", {})),
-        regression=_build_promotion_task_config(raw.get("regression", {})),
-    )
-
-
-_REQUIRED_RULE_KEYS: frozenset[str] = frozenset({"id", "metric", "threshold", "operator"})
-
-
-def _build_promotion_task_config(raw: dict) -> PromotionTaskConfig:
-    errors: list[str] = []
-    rules = []
-    for i, rule in enumerate(raw.get("rules", [])):
-        if not isinstance(rule, dict):
-            errors.append(f"Rule at index {i}: must be a mapping, got {type(rule).__name__}")
-            continue
-        missing = _REQUIRED_RULE_KEYS - rule.keys()
-        if missing:
-            errors.append(
-                f"Rule at index {i} (id={rule.get('id', '?')}): "
-                f"missing required keys: {', '.join(sorted(missing))}"
-            )
-            continue
-        if rule["operator"] not in VALID_OPERATORS:
-            errors.append(
-                f"Rule '{rule['id']}': invalid operator '{rule['operator']}' "
-                f"— must be one of {sorted(VALID_OPERATORS)}"
-            )
-            continue
-        rules.append(PromotionRule(
-            id=rule["id"],
-            metric=rule["metric"],
-            threshold=float(rule["threshold"]),
-            operator=rule["operator"],
-            description=rule.get("description", ""),
-        ))
-    if errors:
-        raise ValueError("Promotion config validation failed:\n  - " + "\n  - ".join(errors))
-    return PromotionTaskConfig(rules=tuple(rules))
-
-
-# ---------------------------------------------------------------------------
-# Deployment config dataclasses and loader
-# ---------------------------------------------------------------------------
-
-VALID_SERVER_LOG_LEVELS: frozenset[str] = frozenset({"debug", "info", "warning", "error"})
-VALID_MODEL_STAGES: frozenset[str] = frozenset({"Production", "Staging", "Archived", "None"})
-
-
-@dataclass(frozen=True)
-class ServerConfig:
-    host: str = "0.0.0.0"
-    port: int = 8000
-    log_level: str = "info"
-
-
-@dataclass(frozen=True)
-class ModelServingConfig:
-    allowed_stage: str = "Production"
-    require_production_model: bool = True
-    startup_timeout_seconds: int = 120
-
-
-@dataclass(frozen=True)
-class HealthcheckConfig:
-    include_model_info: bool = True
-
-
-@dataclass(frozen=True)
-class DeploymentConfig:
-    server: ServerConfig = field(default_factory=ServerConfig)
-    model: ModelServingConfig = field(default_factory=ModelServingConfig)
-    healthcheck: HealthcheckConfig = field(default_factory=HealthcheckConfig)
-
-
-def _validate_deployment(raw: dict) -> list[str]:
-    errors: list[str] = []
-
-    server = raw.get("server", {})
-    if not isinstance(server, dict):
-        errors.append("'server' must be a mapping")
-    else:
-        if "port" in server:
-            port = server["port"]
-            if isinstance(port, bool) or not isinstance(port, int) or port < 1 or port > 65535:
-                errors.append(f"'server.port' must be an integer between 1 and 65535, got {port!r}")
-        if "log_level" in server:
-            _validate_enum(server["log_level"], VALID_SERVER_LOG_LEVELS, "server.log_level", errors)
-
-    model = raw.get("model", {})
-    if not isinstance(model, dict):
-        errors.append("'model' must be a mapping")
-    else:
-        if "allowed_stage" in model:
-            _validate_enum(model["allowed_stage"], VALID_MODEL_STAGES, "model.allowed_stage", errors)
-        if "require_production_model" in model and not isinstance(model["require_production_model"], bool):
-            errors.append(
-                f"'model.require_production_model' must be a boolean, got {type(model['require_production_model']).__name__!r}"
-            )
-        if "startup_timeout_seconds" in model:
-            _validate_positive_int(model["startup_timeout_seconds"], "model.startup_timeout_seconds", errors)
-
-    healthcheck = raw.get("healthcheck", {})
-    if not isinstance(healthcheck, dict):
-        errors.append("'healthcheck' must be a mapping")
-    else:
-        if "include_model_info" in healthcheck and not isinstance(healthcheck["include_model_info"], bool):
-            errors.append(
-                f"'healthcheck.include_model_info' must be a boolean, got {type(healthcheck['include_model_info']).__name__!r}"
-            )
-
-    return errors
-
-
-def _build_deployment_config(raw: dict) -> DeploymentConfig:
-    server_raw = raw.get("server", {}) or {}
-    model_raw = raw.get("model", {}) or {}
-    hc_raw = raw.get("healthcheck", {}) or {}
-
-    return DeploymentConfig(
-        server=ServerConfig(
-            host=server_raw.get("host", "0.0.0.0"),
-            port=server_raw.get("port", 8000),
-            log_level=server_raw.get("log_level", "info"),
-        ),
-        model=ModelServingConfig(
-            allowed_stage=model_raw.get("allowed_stage", "Production"),
-            require_production_model=model_raw.get("require_production_model", True),
-            startup_timeout_seconds=model_raw.get("startup_timeout_seconds", 120),
-        ),
-        healthcheck=HealthcheckConfig(
-            include_model_info=hc_raw.get("include_model_info", True),
-        ),
-    )
-
-
-def load_deployment_config(path: Path) -> DeploymentConfig:
-    """Load, validate, and return a DeploymentConfig from a YAML file.
-
-    Raises:
-        FileNotFoundError: Config file does not exist.
-        ValueError: Config file is empty, malformed, or fails validation.
-    """
-    logger.debug("Loading deployment config from: %s", path)
-
-    raw = _load_yaml(path)
-
-    errors = _validate_deployment(raw)
-    if errors:
-        error_report = "\n - ".join(errors)
-        raise ValueError(f"Deployment config validation failed:\n - {error_report}")
-
-    config = _build_deployment_config(raw)
-
-    logger.debug(
-        "Deployment config loaded: stage=%s, require_model=%s, port=%d",
-        config.model.allowed_stage,
-        config.model.require_production_model,
-        config.server.port,
-    )
-    return config
-
-
-def _load_yaml(path: Path) -> dict:
-    """
-    Read a YAML file and return its contents as a dict.
-    
-    Raises FileNotFoundError if the path does not exist, and ValueError
-    if the file is empty or does not contain a YAML mapping.
-    """
-    if not path.exists():
-        raise FileNotFoundError(f"Config file not found: {path}")
-    
-    with open(path, "r") as f:
-        raw = yaml.safe_load(f)
-        
-    if raw is None:
-        raise ValueError(f"Config file is empty: {path}")
-
-    if not isinstance(raw, dict):
-        raise ValueError(
-            f"Config file must contain a YAML mapping, got {type(raw).__name__}: {path}"
-        )
-        
-    return raw
-
-def _validate_positive_int(
-    value: object,
-    field_path: str,
-    errors: list[str],
-    min_val: int = 1,
-    allow_null: bool = False,
-) -> None:
-    """
-    Validate that value is a non-bool integer >= min_val.
-    If allow_null=True, None is accepted without error.
-    """
-    if value is None:
-        if not allow_null:
-            errors.append(
-                f"'{field_path}' must be a positive integer, got None"
-            )
-        return
-    if isinstance(value, bool) or not isinstance(value, int) or value < min_val:
-        if min_val > 1:
-            desc = f"an integer >= {min_val}"
-        elif allow_null:
-            desc = "a positive integer or null"
-        else:
-            desc = "a positive integer"
-        errors.append(f"'{field_path}' must be {desc}, got {value!r}")
-
-
-def _validate_enum(
-    value: object,
-    valid_set: set[str],
-    field_name: str,
-    errors: list[str],
-) -> None:
-    """Validate that value is one of the allowed strings in valid_set."""
-    if value not in valid_set:
-        errors.append(
-            f"Invalid {field_name} '{value}'. "
-            f"Must be one of: {', '.join(sorted(valid_set))}"
-        )
-
-
-def _validate_section(
-    raw: dict,
-    section_name: str,
-    required_keys: set[str],
-    errors: list[str],
-) -> dict | None:
-    """
-    Validate a nested dict section: type-check, required keys, warn on extras.
-    Returns the section dict on success, None if the value is not a dict.
-    """
-    section = raw[section_name]
-    if not isinstance(section, dict):
-        errors.append(f"'{section_name}' must be a mapping")
-        return None
-    missing = required_keys - section.keys()
-    if missing:
-        errors.append(
-            f"Missing required keys in '{section_name}': {', '.join(sorted(missing))}"
-        )
-    extra = section.keys() - required_keys
-    if extra:
-        logger.warning("Unknown keys in '%s': %s", section_name, ", ".join(sorted(extra)))
-    return section
-
+# =============================================================================
+# Pipeline domain: validate → build → load
+# =============================================================================
 
 def _validate(raw: dict) -> list[str]:
     """
@@ -496,18 +111,18 @@ def _validate(raw: dict) -> list[str]:
     Returns a list of error strings. An empty list means the pipeline config is valid.
     """
     errors = []
-    
+
     missing_top = REQUIRED_TOP_LEVEL_KEYS - raw.keys()
     if missing_top:
         errors.append(f"Missing required top-level keys: {', '.join(sorted(missing_top))}")
-        
+
     extra_top = raw.keys() - REQUIRED_TOP_LEVEL_KEYS
     if extra_top:
         logger.warning("Unknown top-level keys: %s", ", ".join(sorted(extra_top)))
-    
+
     if "task_type" in raw:
         _validate_enum(raw["task_type"], VALID_TASK_TYPES, "task_type", errors)
-        
+
     if "random_seed" in raw and (isinstance(raw["random_seed"], bool) or not isinstance(raw["random_seed"], int)):
         errors.append(
             f"random_seed must be an integer, got {type(raw['random_seed']).__name__}"
@@ -515,7 +130,7 @@ def _validate(raw: dict) -> list[str]:
 
     if "log_level" in raw:
         _validate_enum(raw["log_level"], VALID_LOG_LEVELS, "log_level", errors)
-    
+
     if "project" in raw:
         _validate_section(raw, "project", REQUIRED_PROJECT_KEYS, errors)
 
@@ -534,25 +149,25 @@ def _validate(raw: dict) -> list[str]:
                     f"Invalid pipeline stage(s): {', '.join(invalid)}. "
                     f"Allowed: {', '.join(sorted(VALID_PIPELINE_STAGES))}"
                 )
-                
+
     if "output_dir" in raw and not isinstance(raw["output_dir"], str):
         errors.append(
             f"'output_dir' must be a string, got {type(raw['output_dir']).__name__}"
         )
-                    
+
     if "data" in raw:
         _validate_section(raw, "data", REQUIRED_DATA_KEYS, errors)
 
-                
+
     if "configs" in raw:
         _validate_section(raw, "configs", REQUIRED_CONFIGS_KEYS, errors)
-  
+
     return errors
 
 def _build_config(raw: dict) -> PipelineConfig:
     """
     Construct a PipelineConfig from a validated raw dict.
-    
+
     This function assumes _validate has already passed with no errors.
     It performs pure mapping from dict keys to dataclass fields.
     """
@@ -598,10 +213,41 @@ def _build_config(raw: dict) -> PipelineConfig:
         mlflow = mlflow_cfg,
     )
 
+def load_config(path: Path) -> PipelineConfig:
+    """
+    Load, validate, and return a PipelineConfig from a YAML file.
+
+    This is the single entry point for configuration loading. It guarantees
+    that the returned object is complete, valid, and immutable.
+
+    Raises:
+        FileNotFoundError: Config file does not exist.
+        ValueError: Config file is empty, malformed, or fails validation.
+    """
+    logger.debug("Loading config from: %s", path)
+
+    raw = _load_yaml(path)
+
+    errors = _validate(raw)
+    if errors:
+        error_report = "\n - ".join(errors)
+        raise ValueError(f"Config validation failed:\n - {error_report}")
+
+    config = _build_config(raw)
+
+    logger.debug("Config loaded successfully: task_type=%s", config.task_type)
+
+    return config
+
+
+# =============================================================================
+# Training domain: validate → build → load
+# =============================================================================
+
 def _validate_training(raw: dict) -> list[str]:
     """
     Validate the training config section of the raw dict.
-    
+
     Returns a list of error strings. An empty list means the training config is valid.
     """
     errors = []
@@ -630,7 +276,7 @@ def _validate_training(raw: dict) -> list[str]:
         errors.append("Missing required key in 'model': 'algorithm'")
     else:
         _validate_enum(algorithm, VALID_ALGORITHMS, "algorithm", errors)
-        
+
     if not isinstance(model["hyperparameters"], dict):
         errors.append("'model.hyperparameters' must be a mapping")
         return errors
@@ -727,52 +373,41 @@ def _build_training_config(raw: dict) -> TrainingConfig:
         )
     )
 
-VALID_IMAGE_COLOR_MODES: frozenset[str] = {"rgb", "grayscale"}
-
-_PREPROCESSING_TOP_LEVEL_KEYS: set[str] = {
-    "fail_on_nulls", "min_rows", "validate_types", "validate_labels", "validate_on_skip",
-    "numeric_features", "categorical_features",
-    "encoding", "scaling", "missing_values",
-    "image",
-}
-_IMAGE_KEYS: set[str] = {"target_size", "color_mode", "normalize", "flatten", "augmentation"}
-_IMAGE_AUGMENTATION_KEYS: set[str] = {"enabled", "horizontal_flip", "rotation_degrees", "augmentation_factor"}
-_ENCODING_KEYS: set[str] = {"enabled", "strategy", "handle_unknown", "min_frequency"}
-_SCALING_KEYS: set[str] = {"enabled", "strategy"}
-_MISSING_VALUES_KEYS: set[str] = {"policy", "numeric_strategy", "categorical_strategy", "fill_value"}
-
-
-def _validate_preprocessing(raw: dict) -> list[str]:
+def load_training_config(path: Path) -> TrainingConfig:
     """
-    Validate preprocessing.yaml against the PreprocessingConfig schema.
+    Load, validate, and return a TrainingConfig from a YAML file.
 
-    Collects ALL errors before raising (fail-all-at-once pattern).
-    Emits logger.warning() for unknown keys (typo guard) and for
-    cross-field invariant violations (e.g. min_frequency on ordinal encoder).
-    Returns a list of error strings; empty list means config is valid.
+    This is the single entry point for training configuration loading.
+    Follows the same contract as load_config().
+
+    Raises:
+        FileNotFoundError: Config file does not exist.
+        ValueError: Config file is empty, malformed, or fails validation.
     """
-    errors: list[str] = []
+    logger.debug("Loading training config from: %s", path)
 
-    # --- Unknown top-level keys ---
-    extra_top = set(raw.keys()) - _PREPROCESSING_TOP_LEVEL_KEYS
-    if extra_top:
-        logger.warning(
-            "Unknown keys in preprocessing.yaml (possible typo): %s",
-            ", ".join(sorted(extra_top)),
-        )
+    raw = _load_yaml(path)
 
-    # --- Top-level booleans ---
-    for key in ("fail_on_nulls", "validate_types", "validate_labels", "validate_on_skip"):
-        if key in raw and not isinstance(raw[key], bool):
-            errors.append(f"'{key}' must be a boolean, got {type(raw[key]).__name__!r}")
+    errors = _validate_training(raw)
+    if errors:
+        error_report = "\n - ".join(errors)
+        raise ValueError(f"Training config validation failed:\n - {error_report}")
 
-    # --- min_rows ---
-    if "min_rows" in raw:
-        v = raw["min_rows"]
-        if isinstance(v, bool) or not isinstance(v, int) or v < 1:
-            errors.append(f"'min_rows' must be a positive integer, got {v!r}")
+    config = _build_training_config(raw)
 
-    # --- Feature type overrides ---
+    logger.debug(
+        "Training config loaded successfully: algorithm=%s", config.model.algorithm
+    )
+
+    return config
+
+
+# =============================================================================
+# Preprocessing domain: validate → build → load
+# =============================================================================
+
+def _validate_feature_overrides(raw: dict, errors: list[str]) -> None:
+    """Validate numeric_features / categorical_features lists and their overlap."""
     num_feats = raw.get("numeric_features")
     cat_feats = raw.get("categorical_features")
     for key, v in (("numeric_features", num_feats), ("categorical_features", cat_feats)):
@@ -802,21 +437,98 @@ def _validate_preprocessing(raw: dict) -> list[str]:
                 "Each feature must appear in exactly one list."
             )
 
-    # --- Encoding ---
-    enc = raw.get("encoding", {})
-    if not isinstance(enc, dict):
-        errors.append("'encoding' must be a mapping")
-    else:
-        extra_enc = set(enc.keys()) - _ENCODING_KEYS
-        if extra_enc:
-            logger.warning(
-                "Unknown keys in 'encoding' (possible typo): %s",
-                ", ".join(sorted(extra_enc)),
-            )
-        if "enabled" in enc and not isinstance(enc["enabled"], bool):
+
+def _validate_image_augmentation(aug: dict, errors: list[str]) -> None:
+    """Validate the image.augmentation sub-section."""
+    extra_aug = set(aug.keys()) - _IMAGE_AUGMENTATION_KEYS
+    if extra_aug:
+        logger.warning(
+            "Unknown keys in 'image.augmentation' (possible typo): %s",
+            ", ".join(sorted(extra_aug)),
+        )
+    for key in ("enabled", "horizontal_flip"):
+        _validate_bool(aug, key, errors, prefix="image.augmentation.")
+    if "rotation_degrees" in aug:
+        rd = aug["rotation_degrees"]
+        if isinstance(rd, bool) or not isinstance(rd, int) or rd < 0:
             errors.append(
-                f"'encoding.enabled' must be a boolean, got {type(enc['enabled']).__name__!r}"
+                f"'image.augmentation.rotation_degrees' must be a non-negative integer, got {rd!r}"
             )
+    if "augmentation_factor" in aug:
+        af = aug["augmentation_factor"]
+        if isinstance(af, bool) or not isinstance(af, int) or af < 1:
+            errors.append(
+                f"'image.augmentation.augmentation_factor' must be an integer >= 1, got {af!r}"
+            )
+
+
+def _validate_image_section(img: dict, errors: list[str]) -> None:
+    """Validate the image preprocessing sub-section."""
+    extra_img = set(img.keys()) - _IMAGE_KEYS
+    if extra_img:
+        logger.warning(
+            "Unknown keys in 'image' (possible typo): %s",
+            ", ".join(sorted(extra_img)),
+        )
+    if "target_size" in img:
+        ts = img["target_size"]
+        if (
+            not isinstance(ts, list)
+            or len(ts) != 2
+            or not all(isinstance(x, int) and not isinstance(x, bool) and x > 0 for x in ts)
+        ):
+            errors.append(
+                f"'image.target_size' must be a list of two positive integers, got {ts!r}"
+            )
+    if "color_mode" in img:
+        _validate_enum(img["color_mode"], VALID_IMAGE_COLOR_MODES, "image.color_mode", errors)
+    for key in ("normalize", "flatten"):
+        _validate_bool(img, key, errors, prefix="image.")
+
+    aug = img.get("augmentation")
+    if aug is not None:
+        if not isinstance(aug, dict):
+            errors.append("'image.augmentation' must be a mapping")
+        else:
+            _validate_image_augmentation(aug, errors)
+
+
+def _validate_preprocessing(raw: dict) -> list[str]:
+    """
+    Validate preprocessing.yaml against the PreprocessingConfig schema.
+
+    Collects ALL errors before raising (fail-all-at-once pattern).
+    Emits logger.warning() for unknown keys (typo guard) and for
+    cross-field invariant violations (e.g. min_frequency on ordinal encoder).
+    Returns a list of error strings; empty list means config is valid.
+    """
+    errors: list[str] = []
+
+    # --- Unknown top-level keys ---
+    extra_top = set(raw.keys()) - _PREPROCESSING_TOP_LEVEL_KEYS
+    if extra_top:
+        logger.warning(
+            "Unknown keys in preprocessing.yaml (possible typo): %s",
+            ", ".join(sorted(extra_top)),
+        )
+
+    # --- Top-level booleans ---
+    for key in ("fail_on_nulls", "validate_types", "validate_labels", "validate_on_skip"):
+        _validate_bool(raw, key, errors)
+
+    # --- min_rows ---
+    if "min_rows" in raw:
+        v = raw["min_rows"]
+        if isinstance(v, bool) or not isinstance(v, int) or v < 1:
+            errors.append(f"'min_rows' must be a positive integer, got {v!r}")
+
+    # --- Feature type overrides ---
+    _validate_feature_overrides(raw, errors)
+
+    # --- Encoding ---
+    enc = _validate_optional_section(raw, "encoding", _ENCODING_KEYS, errors)
+    if enc is not None:
+        _validate_bool(enc, "enabled", errors, prefix="encoding.")
         if "strategy" in enc:
             _validate_enum(enc["strategy"], VALID_ENCODING_STRATEGIES, "encoding.strategy", errors)
         if "handle_unknown" in enc:
@@ -837,34 +549,15 @@ def _validate_preprocessing(raw: dict) -> list[str]:
                 )
 
     # --- Scaling ---
-    scl = raw.get("scaling", {})
-    if not isinstance(scl, dict):
-        errors.append("'scaling' must be a mapping")
-    else:
-        extra_scl = set(scl.keys()) - _SCALING_KEYS
-        if extra_scl:
-            logger.warning(
-                "Unknown keys in 'scaling' (possible typo): %s",
-                ", ".join(sorted(extra_scl)),
-            )
-        if "enabled" in scl and not isinstance(scl["enabled"], bool):
-            errors.append(
-                f"'scaling.enabled' must be a boolean, got {type(scl['enabled']).__name__!r}"
-            )
+    scl = _validate_optional_section(raw, "scaling", _SCALING_KEYS, errors)
+    if scl is not None:
+        _validate_bool(scl, "enabled", errors, prefix="scaling.")
         if "strategy" in scl:
             _validate_enum(scl["strategy"], VALID_SCALING_STRATEGIES, "scaling.strategy", errors)
 
     # --- Missing values ---
-    mv = raw.get("missing_values", {})
-    if not isinstance(mv, dict):
-        errors.append("'missing_values' must be a mapping")
-    else:
-        extra_mv = set(mv.keys()) - _MISSING_VALUES_KEYS
-        if extra_mv:
-            logger.warning(
-                "Unknown keys in 'missing_values' (possible typo): %s",
-                ", ".join(sorted(extra_mv)),
-            )
+    mv = _validate_optional_section(raw, "missing_values", _MISSING_VALUES_KEYS, errors)
+    if mv is not None:
         if "policy" in mv:
             _validate_enum(mv["policy"], VALID_MISSING_POLICIES, "missing_values.policy", errors)
         if "numeric_strategy" in mv:
@@ -909,56 +602,7 @@ def _validate_preprocessing(raw: dict) -> list[str]:
         if not isinstance(img, dict):
             errors.append("'image' must be a mapping")
         else:
-            extra_img = set(img.keys()) - _IMAGE_KEYS
-            if extra_img:
-                logger.warning(
-                    "Unknown keys in 'image' (possible typo): %s",
-                    ", ".join(sorted(extra_img)),
-                )
-            if "target_size" in img:
-                ts = img["target_size"]
-                if (
-                    not isinstance(ts, list)
-                    or len(ts) != 2
-                    or not all(isinstance(x, int) and not isinstance(x, bool) and x > 0 for x in ts)
-                ):
-                    errors.append(
-                        f"'image.target_size' must be a list of two positive integers, got {ts!r}"
-                    )
-            if "color_mode" in img:
-                _validate_enum(img["color_mode"], VALID_IMAGE_COLOR_MODES, "image.color_mode", errors)
-            for key in ("normalize", "flatten"):
-                if key in img and not isinstance(img[key], bool):
-                    errors.append(f"'image.{key}' must be a boolean, got {type(img[key]).__name__!r}")
-
-            aug = img.get("augmentation")
-            if aug is not None:
-                if not isinstance(aug, dict):
-                    errors.append("'image.augmentation' must be a mapping")
-                else:
-                    extra_aug = set(aug.keys()) - _IMAGE_AUGMENTATION_KEYS
-                    if extra_aug:
-                        logger.warning(
-                            "Unknown keys in 'image.augmentation' (possible typo): %s",
-                            ", ".join(sorted(extra_aug)),
-                        )
-                    for key in ("enabled", "horizontal_flip"):
-                        if key in aug and not isinstance(aug[key], bool):
-                            errors.append(
-                                f"'image.augmentation.{key}' must be a boolean, got {type(aug[key]).__name__!r}"
-                            )
-                    if "rotation_degrees" in aug:
-                        rd = aug["rotation_degrees"]
-                        if isinstance(rd, bool) or not isinstance(rd, int) or rd < 0:
-                            errors.append(
-                                f"'image.augmentation.rotation_degrees' must be a non-negative integer, got {rd!r}"
-                            )
-                    if "augmentation_factor" in aug:
-                        af = aug["augmentation_factor"]
-                        if isinstance(af, bool) or not isinstance(af, int) or af < 1:
-                            errors.append(
-                                f"'image.augmentation.augmentation_factor' must be an integer >= 1, got {af!r}"
-                            )
+            _validate_image_section(img, errors)
 
     return errors
 
@@ -1055,56 +699,149 @@ def load_preprocessing_config(path: Path) -> PreprocessingConfig:
     return config
 
 
-def load_training_config(path: Path) -> TrainingConfig:
-    """
-    Load, validate, and return a TrainingConfig from a YAML file.
+# =============================================================================
+# Evaluation domain: load
+# =============================================================================
 
-    This is the single entry point for training configuration loading.
-    Follows the same contract as load_config().
-
-    Raises:
-        FileNotFoundError: Config file does not exist.
-        ValueError: Config file is empty, malformed, or fails validation.
-    """
-    logger.debug("Loading training config from: %s", path)
-
+def load_evaluation_config(path: Path) -> EvaluationConfig:
     raw = _load_yaml(path)
-
-    errors = _validate_training(raw)
-    if errors:
-        error_report = "\n - ".join(errors)
-        raise ValueError(f"Training config validation failed:\n - {error_report}")
-
-    config = _build_training_config(raw)
-
-    logger.debug(
-        "Training config loaded successfully: algorithm=%s", config.model.algorithm
+    cls_raw = raw.get("classification", {}) or {}
+    averaging = cls_raw.get("averaging", "weighted")
+    if averaging not in {"weighted", "macro", "binary"}:
+        raise ValueError(
+            f"Invalid averaging strategy '{averaging}' — must be weighted, macro, or binary."
+        )
+    return EvaluationConfig(
+        classification=ClassificationEvalConfig(averaging=averaging),
+        regression=RegressionEvalConfig(),
     )
 
-    return config
 
-def load_config(path: Path) -> PipelineConfig:
-    """
-    Load, validate, and return a PipelineConfig from a YAML file.
-    
-    This is the single entry point for configuration loading. It guarantees
-    that the returned object is complete, valid, and immutable.
-    
+# =============================================================================
+# Promotion domain: build → load
+# =============================================================================
+
+def _build_promotion_task_config(raw: dict) -> PromotionTaskConfig:
+    errors: list[str] = []
+    rules = []
+    for i, rule in enumerate(raw.get("rules", [])):
+        if not isinstance(rule, dict):
+            errors.append(f"Rule at index {i}: must be a mapping, got {type(rule).__name__}")
+            continue
+        missing = _REQUIRED_RULE_KEYS - rule.keys()
+        if missing:
+            errors.append(
+                f"Rule at index {i} (id={rule.get('id', '?')}): "
+                f"missing required keys: {', '.join(sorted(missing))}"
+            )
+            continue
+        if rule["operator"] not in VALID_OPERATORS:
+            errors.append(
+                f"Rule '{rule['id']}': invalid operator '{rule['operator']}' "
+                f"— must be one of {sorted(VALID_OPERATORS)}"
+            )
+            continue
+        rules.append(PromotionRule(
+            id=rule["id"],
+            metric=rule["metric"],
+            threshold=float(rule["threshold"]),
+            operator=rule["operator"],
+            description=rule.get("description", ""),
+        ))
+    if errors:
+        raise ValueError("Promotion config validation failed:\n  - " + "\n  - ".join(errors))
+    return PromotionTaskConfig(rules=tuple(rules))
+
+
+def load_promotion_config(path: Path) -> PromotionConfig:
+    raw = _load_yaml(path)
+    return PromotionConfig(
+        classification=_build_promotion_task_config(raw.get("classification", {})),
+        regression=_build_promotion_task_config(raw.get("regression", {})),
+    )
+
+
+# =============================================================================
+# Deployment domain: validate → build → load
+# =============================================================================
+
+def _validate_deployment(raw: dict) -> list[str]:
+    errors: list[str] = []
+
+    server = raw.get("server", {})
+    if not isinstance(server, dict):
+        errors.append("'server' must be a mapping")
+    else:
+        if "port" in server:
+            port = server["port"]
+            if isinstance(port, bool) or not isinstance(port, int) or port < 1 or port > 65535:
+                errors.append(f"'server.port' must be an integer between 1 and 65535, got {port!r}")
+        if "log_level" in server:
+            _validate_enum(server["log_level"], VALID_SERVER_LOG_LEVELS, "server.log_level", errors)
+
+    model = raw.get("model", {})
+    if not isinstance(model, dict):
+        errors.append("'model' must be a mapping")
+    else:
+        if "allowed_stage" in model:
+            _validate_enum(model["allowed_stage"], VALID_MODEL_STAGES, "model.allowed_stage", errors)
+        _validate_bool(model, "require_production_model", errors, prefix="model.")
+        if "startup_timeout_seconds" in model:
+            _validate_positive_int(model["startup_timeout_seconds"], "model.startup_timeout_seconds", errors)
+
+    healthcheck = raw.get("healthcheck", {})
+    if not isinstance(healthcheck, dict):
+        errors.append("'healthcheck' must be a mapping")
+    else:
+        _validate_bool(healthcheck, "include_model_info", errors, prefix="healthcheck.")
+
+    return errors
+
+
+def _build_deployment_config(raw: dict) -> DeploymentConfig:
+    server_raw = raw.get("server", {}) or {}
+    model_raw = raw.get("model", {}) or {}
+    hc_raw = raw.get("healthcheck", {}) or {}
+
+    return DeploymentConfig(
+        server=ServerConfig(
+            host=server_raw.get("host", "0.0.0.0"),
+            port=server_raw.get("port", 8000),
+            log_level=server_raw.get("log_level", "info"),
+        ),
+        model=ModelServingConfig(
+            allowed_stage=model_raw.get("allowed_stage", "Production"),
+            require_production_model=model_raw.get("require_production_model", True),
+            startup_timeout_seconds=model_raw.get("startup_timeout_seconds", 120),
+        ),
+        healthcheck=HealthcheckConfig(
+            include_model_info=hc_raw.get("include_model_info", True),
+        ),
+    )
+
+
+def load_deployment_config(path: Path) -> DeploymentConfig:
+    """Load, validate, and return a DeploymentConfig from a YAML file.
+
     Raises:
         FileNotFoundError: Config file does not exist.
         ValueError: Config file is empty, malformed, or fails validation.
     """
-    logger.debug("Loading config from: %s", path)
-    
+    logger.debug("Loading deployment config from: %s", path)
+
     raw = _load_yaml(path)
-    
-    errors = _validate(raw)
+
+    errors = _validate_deployment(raw)
     if errors:
         error_report = "\n - ".join(errors)
-        raise ValueError(f"Config validation failed:\n - {error_report}")
-    
-    config = _build_config(raw)
-    
-    logger.debug("Config loaded successfully: task_type=%s", config.task_type)
-    
+        raise ValueError(f"Deployment config validation failed:\n - {error_report}")
+
+    config = _build_deployment_config(raw)
+
+    logger.debug(
+        "Deployment config loaded: stage=%s, require_model=%s, port=%d",
+        config.model.allowed_stage,
+        config.model.require_production_model,
+        config.server.port,
+    )
     return config
