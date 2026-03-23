@@ -64,6 +64,23 @@ def atomic_write_pickle(obj: Any, path: Path) -> None:
     tmp.replace(path)
 
 
+def atomic_write_npz(path: Path, **arrays: Any) -> None:
+    """Write numpy arrays to a compressed .npz file atomically.
+
+    Uses np.savez_compressed to a temp file, then renames to the target path.
+
+    Args:
+        path:    Destination .npz path.
+        arrays:  Keyword arguments passed to np.savez_compressed (e.g., X=..., y=...).
+    """
+    import numpy as np
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_stem = path.with_name(path.stem + "_tmp")
+    np.savez_compressed(tmp_stem, **arrays)
+    # np.savez_compressed appends .npz automatically
+    tmp_stem.with_suffix(".npz").replace(path)
+
+
 def sanitize_for_json(obj: Any) -> Any:
     """
     Convert values that are not strict-JSON compliant into safe equivalents.

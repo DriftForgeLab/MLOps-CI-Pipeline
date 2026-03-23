@@ -20,9 +20,9 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from src.common.io import atomic_write_json, atomic_write_pickle
+from src.common.io import atomic_write_json, atomic_write_npz, atomic_write_pickle
 from src.config.loader import PreprocessingConfig, load_preprocessing_config
-from src.data.image_utils import scan_image_folder
+from src.data.image_utils import compute_folder_hash, scan_image_folder
 
 logger = logging.getLogger(__name__)
 
@@ -147,8 +147,10 @@ def run_image_preprocessing(
     expected_formats = image_props.get("expected_formats")
     target_name = metadata.get("target", "label")
 
-    # Idempotency check
-    preprocess_hash = _compute_image_preprocess_hash(img_config, metadata)
+    # Idempotency check (includes training manifest hash for content sensitivity)
+    train_images_dir = version_dir / "train" / "images"
+    train_manifest_hash = compute_folder_hash(train_images_dir) if train_images_dir.exists() else ""
+    preprocess_hash = _compute_image_preprocess_hash(img_config, metadata, train_manifest_hash)
     existing_meta = _load_existing_metadata(preprocessed_dir)
     if existing_meta and existing_meta.get("preprocess_hash") == preprocess_hash and _outputs_exist(preprocessed_dir):
         logger.info("  Image preprocessing up-to-date for version '%s' — skipping.", version_id)
@@ -156,8 +158,7 @@ def run_image_preprocessing(
 
     preprocessed_dir.mkdir(parents=True, exist_ok=True)
 
-    # Build class mapping from training split
-    train_images_dir = version_dir / "train" / "images"
+    # Build class mapping from training split (cached for reuse in the loop)
     X_train_raw, train_labels, _ = _load_and_transform_images(
         train_images_dir, img_config.target_size, img_config.color_mode, expected_formats
     )
@@ -196,17 +197,27 @@ def run_image_preprocessing(
                   "std": std.tolist() if std is not None else None}
 
     for split_name in ("train", "val", "test"):
-        split_images_dir = version_dir / split_name / "images"
-        X_raw, labels, _ = _load_and_transform_images(
-            split_images_dir, img_config.target_size, img_config.color_mode, expected_formats
-        )
+        if split_name == "train":
+            # Reuse cached training data (already loaded above)
+            X_raw, labels = X_train_raw.copy(), list(train_labels)
+        else:
+            split_images_dir = version_dir / split_name / "images"
+            X_raw, labels, _ = _load_and_transform_images(
+                split_images_dir, img_config.target_size, img_config.color_mode, expected_formats
+            )
 
         # Normalize using training statistics
         if img_config.normalize:
-            X_raw = X_raw / 255.0
+            if split_name != "train":
+                X_raw = X_raw / 255.0
             X_raw = (X_raw - mean) / std
 
-        # Encode labels
+        # Encode labels (with descriptive error for unseen classes)
+        unknown = set(labels) - set(class_to_index)
+        if unknown:
+            raise ValueError(
+                f"[{split_name}] contains classes not in training: {sorted(unknown)}"
+            )
         y = np.array([class_to_index[lbl] for lbl in labels])
 
         # Augment training set only
@@ -217,7 +228,7 @@ def run_image_preprocessing(
         if img_config.flatten:
             X_raw = X_raw.reshape(X_raw.shape[0], -1)
 
-        np.savez_compressed(preprocessed_dir / f"{split_name}.npz", X=X_raw, y=y)
+        atomic_write_npz(preprocessed_dir / f"{split_name}.npz", X=X_raw, y=y)
 
     # Determine image shape and feature count
     if img_config.color_mode == "grayscale":
@@ -274,7 +285,7 @@ def run_image_preprocessing(
     )
 
 
-def _compute_image_preprocess_hash(img_config, metadata: dict) -> str:
+def _compute_image_preprocess_hash(img_config, metadata: dict, train_manifest_hash: str = "") -> str:
     canonical = json.dumps(
         {
             "pipeline_version": PIPELINE_VERSION,
@@ -288,6 +299,7 @@ def _compute_image_preprocess_hash(img_config, metadata: dict) -> str:
             "rotation_degrees": img_config.augmentation.rotation_degrees,
             "task_type": metadata.get("task_type"),
             "target": metadata.get("target"),
+            "train_manifest_hash": train_manifest_hash,
         },
         sort_keys=True,
     )

@@ -485,6 +485,7 @@ def _compute_preprocess_hash(
             "missing_policy": prep_config.missing_values.policy,
             "numeric_impute_strategy": prep_config.missing_values.numeric_strategy,
             "categorical_impute_strategy": prep_config.missing_values.categorical_strategy,
+            "fill_value": repr(prep_config.missing_values.fill_value),
         },
         sort_keys=True,
     )
@@ -616,16 +617,19 @@ def run_preprocessing(
         ValueError:        If dataset.yaml is malformed, data contract violated,
                            or the pipeline produces unexpected output.
     """
-    # --- Dispatch to image preprocessing if needed ---
+    # --- Load dataset metadata (single parse, reused below) ---
     version_dir = processed_dir / dataset_name / version_id
-    yaml_check_path = version_dir / "dataset.yaml"
-    if yaml_check_path.exists():
-        with open(yaml_check_path) as _f:
-            _meta = yaml.safe_load(_f)
-        if isinstance(_meta, dict) and _meta.get("task_type") == "image_classification":
-            from src.data.image_preprocess import run_image_preprocessing
-            run_image_preprocessing(dataset_name, version_id, prep_config_path, processed_dir)
-            return
+    yaml_path = version_dir / "dataset.yaml"
+    metadata: dict | None = None
+    if yaml_path.exists():
+        with open(yaml_path) as _f:
+            metadata = yaml.safe_load(_f)
+
+    # --- Dispatch to image preprocessing if needed ---
+    if isinstance(metadata, dict) and metadata.get("task_type") in ("image_classification", "image_classification_cnn"):
+        from src.data.image_preprocess import run_image_preprocessing
+        run_image_preprocessing(dataset_name, version_id, prep_config_path, processed_dir)
+        return
 
     # --- Load preprocessing config ---
     prep_config = load_preprocessing_config(prep_config_path)
@@ -639,10 +643,7 @@ def run_preprocessing(
     validate_dataset(dataset_name, version_id, processed_dir=processed_dir)
     preprocessed_dir = version_dir / PREPROCESSED_SUBDIR
 
-    # --- Load dataset contract ---
-    yaml_path = version_dir / "dataset.yaml"
-    with open(yaml_path) as f:
-        metadata = yaml.safe_load(f)
+    # --- Validate dataset contract from already-loaded metadata ---
     if not isinstance(metadata, dict):
         raise ValueError(
             f"Invalid dataset.yaml at '{yaml_path}': expected a YAML mapping/object"
