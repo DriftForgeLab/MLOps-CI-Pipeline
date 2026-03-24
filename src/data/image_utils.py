@@ -77,7 +77,7 @@ def compute_folder_hash(images_dir: Path) -> str:
     """
     entries: list[str] = []
     for img_path in sorted(images_dir.rglob("*")):
-        if img_path.is_file():
+        if img_path.is_file() and img_path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
             rel = img_path.relative_to(images_dir)
             entries.append(f"{rel}:{img_path.stat().st_size}")
 

@@ -67,12 +67,17 @@ def main() -> None:
         logger.error("%s", e)
         sys.exit(1)
 
-    _setup_logging(config.log_level)
-    detect_and_generate(non_interactive=not sys.stdin.isatty())
-    version_result = create_dataset_version(config.dataset)
-    version_id = version_result.name
-    validate_dataset(config.dataset, version_id)
-    split_dataset(config.dataset, version_id, config.random_seed)
+    logging.root.setLevel(getattr(logging, config.log_level))
+
+    try:
+        detect_and_generate(non_interactive=not sys.stdin.isatty())
+        version_result = create_dataset_version(config.dataset)
+        version_id = version_result.name
+        validate_dataset(config.dataset, version_id)
+        split_dataset(config.dataset, version_id, config.random_seed)
+    except Exception as e:
+        logger.error("Data preparation failed: %s", e)
+        sys.exit(1)
 
     logger.info(
         "\nConfig loaded: project = %s v%s, tasktype = %s, seed = %d",

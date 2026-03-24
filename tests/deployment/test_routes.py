@@ -19,6 +19,7 @@ def _make_model_info(
     *,
     model_name="iris-classifier",
     algorithm="random_forest",
+    model_format="sklearn",
     task_type="classification",
     feature_names=("sepal_len", "sepal_wid", "petal_len", "petal_wid"),
     image_shape=None,
@@ -39,6 +40,7 @@ def _make_model_info(
         run_id="run-123",
         stage="Production",
         algorithm=algorithm,
+        model_format=model_format,
         task_type=task_type,
         trained_at="2026-03-10",
         dataset_version_id="abc123",
@@ -72,13 +74,27 @@ def _make_image_base64(width=8, height=8, color=(128, 64, 32)):
 # ── Health & UI ─────────────────────────────────────────────────────────────
 
 class TestHealthAndUI:
-    async def test_health_returns_ok(self):
+    async def test_health_returns_ok_with_models(self):
+        info = _make_model_info()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=_make_app({"m": info})),
+            base_url="http://test",
+        ) as client:
+            resp = await client.get("/health")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "ok"
+            assert data["models_loaded"] == 1
+
+    async def test_health_returns_503_when_no_models(self):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=_make_app()), base_url="http://test"
         ) as client:
             resp = await client.get("/health")
-            assert resp.status_code == 200
-            assert resp.json() == {"status": "ok"}
+            assert resp.status_code == 503
+            data = resp.json()
+            assert data["status"] == "unavailable"
+            assert data["models_loaded"] == 0
 
     async def test_ui_returns_html(self):
         async with httpx.AsyncClient(
@@ -286,9 +302,10 @@ class TestPredictImage:
             assert resp.status_code == 200
             assert resp.json()["prediction"] == "42"
 
-    async def test_cnn_algorithm_path(self):
+    async def test_pytorch_model_format_path(self):
         info = _make_model_info(
             algorithm="cnn",
+            model_format="pytorch",
             task_type="image_classification_cnn",
             image_shape=[8, 8, 3],
             feature_names=[],
@@ -326,3 +343,23 @@ class TestPredictImage:
             # Original pixel values are ~0-1 (after /255), so normalized values
             # should be roughly in [-2, 2] range
             assert arr.min() < 0 or arr.max() > 1
+
+    async def test_zero_std_normalization_no_crash(self):
+        """A channel with std=0 should not produce inf/nan."""
+        info = _make_model_info(
+            image_shape=[8, 8, 3],
+            feature_names=[],
+            normalization_stats={
+                "mean": [0.5, 0.5, 0.5],
+                "std": [0.25, 0.0, 0.25],  # zero std on channel 1
+            },
+            predict_return=np.array([0]),
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=_make_app({"m": info})),
+            base_url="http://test",
+        ) as client:
+            resp = await client.post("/predict/m", json={"image": _make_image_base64()})
+            assert resp.status_code == 200
+            arr = info.model.predict.call_args[0][0]
+            assert np.all(np.isfinite(arr))

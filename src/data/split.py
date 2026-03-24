@@ -88,11 +88,13 @@ def split_dataset(
 ) -> None:
     version_dir = processed_dir / dataset_name / version_id
 
-    # Dispatch to image splitting if task_type is image_classification
+    # Load metadata once — used for dispatch, stratification, and split block update
     yaml_path = version_dir / "dataset.yaml"
     with open(yaml_path) as f:
-        meta = yaml.safe_load(f)
-    if meta.get("task_type") in ("image_classification", "image_classification_cnn"):
+        metadata = yaml.safe_load(f)
+
+    # Dispatch to image splitting if task_type is image_classification
+    if metadata.get("task_type") in ("image_classification", "image_classification_cnn"):
         from src.data.image_split import split_image_dataset
         split_image_dataset(dataset_name, version_id, random_seed, train_ratio, val_ratio, processed_dir)
         return
@@ -107,12 +109,8 @@ def split_dataset(
     if _split_outputs_exist(version_dir):
         logger.info("  Split outputs already exist for version '%s' — skipping.", version_id)
         return
-        
-    test_ratio = _validate_split_ratios(train_ratio, val_ratio)
 
-    yaml_path = version_dir / "dataset.yaml"
-    with open(yaml_path) as f:
-        metadata = yaml.safe_load(f)
+    test_ratio = _validate_split_ratios(train_ratio, val_ratio)
 
     task_type: str = metadata.get("task_type", "regression")
     target: str = metadata.get("target", "")

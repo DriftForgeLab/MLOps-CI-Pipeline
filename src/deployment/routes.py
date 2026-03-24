@@ -298,9 +298,22 @@ def ui() -> HTMLResponse:
 
 
 @router.get("/health")
-def health() -> JSONResponse:
-    """Health check — confirms the API is running."""
-    return JSONResponse(content={"status": "ok"})
+def health(request: Request) -> JSONResponse:
+    """Health / readiness check.
+
+    Returns 200 with model count when at least one model is loaded.
+    Returns 503 when zero models are loaded (the API cannot serve predictions).
+    """
+    models: dict = request.app.state.model_state.get("models", {})
+    model_count = len(models)
+    if model_count == 0:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unavailable", "models_loaded": 0},
+        )
+    return JSONResponse(
+        content={"status": "ok", "models_loaded": model_count},
+    )
 
 
 @router.get("/models", response_model=list[ModelListItem])
@@ -424,7 +437,9 @@ def _predict_image(model_info, body: dict):
         mean = stats.get("mean")
         std = stats.get("std")
         if mean is not None and std is not None:
-            arr = (arr - np.array(mean)) / np.array(std)
+            std_arr = np.array(std)
+            std_arr = np.where(std_arr == 0, 1.0, std_arr)
+            arr = (arr - np.array(mean)) / std_arr
     except Exception as e:
         logger.error("Image preprocessing failed: %s", e)
         return JSONResponse(
@@ -433,7 +448,7 @@ def _predict_image(model_info, body: dict):
         )
 
     try:
-        if model_info.algorithm == "cnn":
+        if model_info.model_format == "pytorch":
             import torch
             # (H, W, C) → (1, C, H, W)
             tensor = torch.tensor(

@@ -118,6 +118,7 @@ def run_image_preprocessing(
     version_id: str,
     prep_config_path: Path,
     processed_dir: Path = Path("data/processed"),
+    random_seed: int | None = None,
 ) -> None:
     """Run image preprocessing: resize, normalize, augment, flatten, save as NPZ."""
     prep_config = load_preprocessing_config(prep_config_path)
@@ -184,13 +185,16 @@ def run_image_preprocessing(
         mean = None
         std = None
 
-    # Get random seed from split metadata
-    train_meta_path = version_dir / "train" / "metadata.json"
-    random_seed = 42
-    if train_meta_path.exists():
-        with open(train_meta_path) as f:
-            train_meta = json.load(f)
-        random_seed = train_meta.get("random_seed", 42)
+    # Resolve random seed: prefer explicit parameter, fall back to split metadata
+    if random_seed is None:
+        train_meta_path = version_dir / "train" / "metadata.json"
+        if train_meta_path.exists():
+            with open(train_meta_path) as f:
+                train_meta = json.load(f)
+            random_seed = train_meta.get("random_seed", 42)
+        else:
+            logger.warning("No random_seed provided and no split metadata found — defaulting to 42")
+            random_seed = 42
 
     # Process all splits
     norm_stats = {"mean": mean.tolist() if mean is not None else None,

@@ -4,7 +4,8 @@
 # Responsibility: Load a trained model artifact, run predictions on the
 # preprocessed evaluation split, and return a structured evaluation report.
 #
-# Design: evaluate() is a pure function — no pipeline side effects.
+# Design: evaluate() performs I/O (reads config files, queries MLflow registry)
+# but has no pipeline side effects (does not write artifacts or modify state).
 # It can be called independently of the pipeline for debugging or ad-hoc use.
 # =============================================================================
 
@@ -51,7 +52,7 @@ def evaluate(
 
     if pt_path.exists():
         import torch
-        model = torch.load(pt_path, weights_only=False)
+        model = torch.load(pt_path, weights_only=False, map_location="cpu")
     elif joblib_path.exists():
         model = joblib.load(joblib_path)
     else:
@@ -163,7 +164,6 @@ def _compute_metrics(y_true, y_pred, task_type: str, eval_config) -> dict:
             metrics["confusion_matrix"] = confusion_matrix(y_true, y_pred).tolist()
         return metrics
     else:
-        import numpy as np
         from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
         mse = float(mean_squared_error(y_true, y_pred))
         return {

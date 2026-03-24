@@ -88,7 +88,7 @@ def validate_dataset(dataset_name: str, version_id: str, processed_dir: Path = P
     # Read metadata early to determine task_type before checking data.csv
     with open(yaml_path, "r") as f:
         metadata_peek = yaml.safe_load(f)
-    is_image = isinstance(metadata_peek, dict) and metadata_peek.get("task_type") == "image_classification"
+    is_image = isinstance(metadata_peek, dict) and metadata_peek.get("task_type") in ("image_classification", "image_classification_cnn")
 
     if not is_image and not csv_path.exists():
         errors.append(f"Missing data.csv in {version_dir}")
@@ -114,14 +114,14 @@ def validate_dataset(dataset_name: str, version_id: str, processed_dir: Path = P
         )
 
     if metadata.get("task_type") not in {"classification", "regression", "image_classification", "image_classification_cnn"}:
-        errors.append(f"Invalid task_type '{metadata.get('task_type')}' — must be classification, regression, or image_classification")
+        errors.append(f"Invalid task_type '{metadata.get('task_type')}' — must be one of: classification, regression, image_classification, image_classification_cnn")
 
     if errors:
         _fail(errors)
 
     task_type = metadata["task_type"]
 
-    if task_type == "image_classification":
+    if task_type in ("image_classification", "image_classification_cnn"):
         _validate_image_dataset(version_dir, metadata, errors)
     else:
         _validate_tabular_dataset(csv_path, metadata, errors)

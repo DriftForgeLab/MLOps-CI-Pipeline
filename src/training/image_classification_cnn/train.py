@@ -120,12 +120,17 @@ def run_training(config: PipelineConfig, version_id: str) -> TrainingResult:
         X_np = X_np[:, np.newaxis, :, :]
 
     torch.manual_seed(config.random_seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(config.random_seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
     X_tensor = torch.tensor(X_np, dtype=torch.float32)
     y_tensor = torch.tensor(y_np, dtype=torch.long)
 
     dataset = TensorDataset(X_tensor, y_tensor)
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    shuffle_gen = torch.Generator().manual_seed(config.random_seed)
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, generator=shuffle_gen)
 
     model = SimpleCNN(num_classes, in_channels, image_size, arch)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)

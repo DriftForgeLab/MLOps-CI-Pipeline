@@ -14,12 +14,13 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from src.config.loader import PipelineConfig, load_promotion_config
-from src.data.preprocess import run_preprocessing
+from src.data.preprocess import run_preprocessing, PREPROCESSED_SUBDIR
 
 from src.training.classification.train import run_training as run_classification_training
 from src.training.regression.train import run_training as run_regression_training
@@ -46,8 +47,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class StageResult:
-    """_summary_
-    Captures the result of executing a single pipeline stage.
+    """Captures the result of executing a single pipeline stage.
 
     Attributes:
         stage:            Name of the stage that was executed (ex. "training")
@@ -74,6 +74,7 @@ def _preprocessing_stage(config: PipelineConfig, version_id: str) -> None:
         version_id=version_id,
         prep_config_path=Path(config.configs.preprocessing),
         processed_dir=Path(config.data.processed),
+        random_seed=config.random_seed,
     )
 
 
@@ -94,7 +95,7 @@ def _training_stage(config: PipelineConfig, version_id: str) -> None:
     artifact_path = save_model_artifact(result, run_id=version_id)
     log_training_to_mlflow(result)
     preprocessed_dir = (
-        Path(config.data.processed) / config.dataset / version_id / "preprocessed"
+        Path(config.data.processed) / config.dataset / version_id / PREPROCESSED_SUBDIR
     )
     log_training_artifacts_to_mlflow(model_dir=artifact_path, preprocessed_dir=preprocessed_dir)
     
@@ -170,23 +171,20 @@ def _promotion_stage(config: PipelineConfig, version_id: str) -> None:
         raise ValueError(f"Promotion rejected by user.{reason_msg}")
 
     # Register and promote the approved model in MLflow Model Registry (ID 9)
-    try:
-        from src.registry.model_registry import (
-            register_approved_model,
-            promote_to_production,
-            attach_lineage_tags,
-            get_mlflow_client,
-        )
-        model_version = register_approved_model(config, mlflow_run_id)
-        promote_to_production(config, model_version.version, mlflow_run_id)
-        client = get_mlflow_client(config)
-        run = client.get_run(mlflow_run_id)
-        attach_lineage_tags(config, model_version.version, run, report, decision)
-    except Exception as e:
-        logger.error("Model Registry integration failed (non-fatal): %s", e)
+    from src.registry.model_registry import (
+        register_approved_model,
+        promote_to_production,
+        attach_lineage_tags,
+        get_mlflow_client,
+    )
+    model_version = register_approved_model(config, mlflow_run_id)
+    promote_to_production(config, model_version.version, mlflow_run_id)
+    client = get_mlflow_client(config)
+    run = client.get_run(mlflow_run_id)
+    attach_lineage_tags(config, model_version.version, run, report, decision)
 
 
-_STAGE_REGISTRY: dict[str, callable] = {
+_STAGE_REGISTRY: dict[str, Callable] = {
     "preprocessing": _preprocessing_stage,
     "training":      _training_stage,
     "evaluation":    _evaluation_stage,
@@ -213,23 +211,24 @@ def execute_stage(stage_name: str, config: PipelineConfig, version_id: str) -> S
     Raises:
         KeyError: If stage_name is not found in _STAGE_REGISTRY.
     """
+    if stage_name not in _STAGE_REGISTRY:
+        raise KeyError(
+            f"Unknown pipeline stage: '{stage_name}'. "
+            f"Registered stages: {', '.join(sorted(_STAGE_REGISTRY))}"
+        )
+
     start = datetime.now(timezone.utc)
     logger.info("===== START: %s =====", stage_name)
-    
+
     try:
         stage_fn = _STAGE_REGISTRY[stage_name]
         stage_fn(config, version_id)
         status = "completed"
         error = None
-    except KeyError:
-        raise KeyError(
-            f"Unknown pipeline stage: '{stage_name}'. "
-            f"Registered stages: {', '.join(sorted(_STAGE_REGISTRY))}"
-        )
     except Exception as e:
         status = "failed"
         error = str(e)
-        logger.error("  Stage '%s' failed: %s", stage_name, e)
+        logger.error("  Stage '%s' failed: %s", stage_name, e, exc_info=True)
         
     end = datetime.now(timezone.utc)
     duration = (end - start).total_seconds()

@@ -13,6 +13,7 @@ from pathlib import Path
 
 import yaml
 
+from src.common.io import atomic_write_text
 from src.data.image_utils import compute_folder_hash
 
 
@@ -59,8 +60,7 @@ def _create_tabular_version(
     metadata["version_id"] = version_id
     metadata["versioned_at"] = datetime.now(timezone.utc).isoformat()
 
-    with open(version_dir / "dataset.yaml", "w") as f:
-        yaml.dump(metadata, f, default_flow_style=False, sort_keys=False)
+    atomic_write_text(version_dir / "dataset.yaml", yaml.dump(metadata, default_flow_style=False, sort_keys=False))
 
     print(f"  Dataset version created: {version_dir}")
     return version_dir
@@ -86,8 +86,7 @@ def _create_image_version(
     metadata["version_id"] = version_id
     metadata["versioned_at"] = datetime.now(timezone.utc).isoformat()
 
-    with open(version_dir / "dataset.yaml", "w") as f:
-        yaml.dump(metadata, f, default_flow_style=False, sort_keys=False)
+    atomic_write_text(version_dir / "dataset.yaml", yaml.dump(metadata, default_flow_style=False, sort_keys=False))
 
     print(f"  Image dataset version created: {version_dir}")
     return version_dir

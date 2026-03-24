@@ -18,19 +18,9 @@ class ModelListItem(BaseModel):
     feature_names: list[str]        # Empty for image models
 
 
-class ImagePredictionRequest(BaseModel):
-    """Input schema for /predict when the loaded model is an image classifier.
-
-    The ``image`` field must be a base64-encoded image string (PNG, JPEG, etc.).
-    Preprocessing (resize, normalize) is applied server-side using parameters
-    stored in the model's feature_map.
-    """
-    image: str
-
-
 class PredictionResponse(BaseModel):
     """Output schema for the /predict endpoint."""
-    prediction: str | float
+    prediction: str
     model_version_id: str
     algorithm: str
     task_type: str

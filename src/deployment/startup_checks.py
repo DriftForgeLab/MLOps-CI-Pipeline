@@ -24,6 +24,7 @@ import joblib
 import torch
 
 from src.config.loader import PipelineConfig, load_config, load_deployment_config
+from src.config.schema import DeploymentConfig
 from src.registry.model_registry import (
     get_mlflow_client,
     resolve_tracking_uri,
@@ -47,6 +48,7 @@ class ProductionModelInfo:
     dataset_version_id: str                 # From lineage tags.
     dataset_name: str                       # From run tags.
     promotion_outcome: str                  # From lineage tags.
+    model_format: str = "sklearn"             # "sklearn" or "pytorch"
     feature_names: list[str] = field(default_factory=list)
     # Image model fields (None for tabular models)
     image_shape: list | None = None         # [H, W, C] from feature_map
@@ -54,36 +56,38 @@ class ProductionModelInfo:
     index_to_class: dict | None = None      # {"0": "cat", "1": "dog"}
 
 
-def _find_all_production_versions(client, config: PipelineConfig) -> list[tuple[str, object]]:
-    """Find all Production model versions in the MLflow registry.
+def _find_all_production_versions(
+    client, config: PipelineConfig, *, allowed_stage: str = "Production",
+) -> list[tuple[str, object]]:
+    """Find all model versions at the given stage in the MLflow registry.
 
     Resolution order:
       1. ``MLFLOW_MODEL_NAME`` env var — look up only that model name.
-      2. Scan all registered models for any with a Production version.
+      2. Scan all registered models for any with a version at *allowed_stage*.
 
     Returns:
-        List of (model_name, prod_version) tuples, one per Production model.
+        List of (model_name, version) tuples, one per matching model.
 
     Raises:
-        RuntimeError: If the registry is unreachable or no Production model exists.
+        RuntimeError: If the registry is unreachable or no matching model exists.
     """
     explicit_name = os.environ.get("MLFLOW_MODEL_NAME")
     if explicit_name:
         _logger.info("Using MLFLOW_MODEL_NAME from environment: %s", explicit_name)
         try:
-            versions = client.get_latest_versions(explicit_name, stages=["Production"])
+            versions = client.get_latest_versions(explicit_name, stages=[allowed_stage])
         except Exception as exc:
             raise RuntimeError(
                 f"Cannot query MLflow registry for '{explicit_name}': {exc}"
             ) from exc
         if not versions:
             raise RuntimeError(
-                f"No Production model found in registry for '{explicit_name}'. "
+                f"No {allowed_stage} model found in registry for '{explicit_name}'. "
                 "Run the pipeline and approve a model before starting the service."
             )
         return [(explicit_name, versions[0])]
 
-    # Scan all registered models for Production versions.
+    # Scan all registered models for versions at the allowed stage.
     try:
         registered = client.search_registered_models()
     except Exception as exc:
@@ -94,15 +98,16 @@ def _find_all_production_versions(client, config: PipelineConfig) -> list[tuple[
     found: list[tuple[str, object]] = []
     for reg_model in registered:
         try:
-            versions = client.get_latest_versions(reg_model.name, stages=["Production"])
-        except Exception:
+            versions = client.get_latest_versions(reg_model.name, stages=[allowed_stage])
+        except Exception as exc:
+            _logger.warning("Could not query versions for '%s': %s", reg_model.name, exc)
             continue
         if versions:
             found.append((reg_model.name, versions[0]))
 
     if not found:
         raise RuntimeError(
-            "No Production model found anywhere in the MLflow Model Registry. "
+            f"No {allowed_stage} model found anywhere in the MLflow Model Registry. "
             "Run the pipeline and approve a model before starting the service. "
             "To target a specific model, set the MLFLOW_MODEL_NAME environment variable."
         )
@@ -136,9 +141,11 @@ def _load_single_production_model(
 
     if pt_path.exists():
         loaded_model = torch.load(pt_path, weights_only=False)
+        model_format = "pytorch"
         _logger.info("PyTorch model loaded from: %s", pt_path.resolve())
     elif joblib_path.exists():
         loaded_model = joblib.load(joblib_path)
+        model_format = "sklearn"
         _logger.info("sklearn model loaded from: %s", joblib_path.resolve())
     else:
         raise RuntimeError(
@@ -184,6 +191,7 @@ def _load_single_production_model(
         run_id=prod_version.run_id,
         stage="Production",
         algorithm=tags.get("lineage.algorithm", "unknown"),
+        model_format=model_format,
         task_type=tags.get("lineage.task_type", "unknown"),
         trained_at=tags.get("lineage.trained_at", "unknown"),
         dataset_version_id=tags.get("lineage.dataset_version_id", "unknown"),
@@ -196,18 +204,40 @@ def _load_single_production_model(
     )
 
 
-def load_all_production_models(config: PipelineConfig) -> dict[str, ProductionModelInfo]:
+def load_all_production_models(
+    config: PipelineConfig,
+    deploy_config: DeploymentConfig,
+) -> dict[str, ProductionModelInfo]:
     """Load all Production models from the MLflow registry.
 
     Returns a dict keyed by MLflow model name. Models that fail to load are
     logged as errors and skipped — the API will start as long as at least
-    one model loads successfully.
+    one model loads successfully (when ``require_production_model`` is True).
+
+    When ``require_production_model`` is False, the API is allowed to start
+    with zero loaded models.
 
     Raises:
-        RuntimeError: If no models could be loaded at all.
+        RuntimeError: If ``require_production_model`` is True and no models
+            could be loaded.
     """
+    allowed_stage = deploy_config.model.allowed_stage
+    require = deploy_config.model.require_production_model
     client = get_mlflow_client(config)
-    prod_versions = _find_all_production_versions(client, config)
+
+    try:
+        prod_versions = _find_all_production_versions(
+            client, config, allowed_stage=allowed_stage,
+        )
+    except RuntimeError:
+        if not require:
+            _logger.warning(
+                "No %s models found, but require_production_model=False — "
+                "starting with zero models.",
+                allowed_stage,
+            )
+            return {}
+        raise
 
     models: dict[str, ProductionModelInfo] = {}
     for model_name, prod_version in prod_versions:
@@ -215,28 +245,33 @@ def load_all_production_models(config: PipelineConfig) -> dict[str, ProductionMo
             info = _load_single_production_model(client, model_name, prod_version)
             models[model_name] = info
             _logger.info(
-                "Loaded Production model: '%s' version=%s algorithm=%s",
-                model_name, info.model_version, info.algorithm,
+                "Loaded %s model: '%s' version=%s algorithm=%s",
+                allowed_stage, model_name, info.model_version, info.algorithm,
             )
         except Exception as exc:
             _logger.error("Failed to load model '%s': %s", model_name, exc)
 
-    if not models:
+    if not models and require:
         raise RuntimeError(
-            "No Production models could be loaded. "
+            f"No {allowed_stage} models could be loaded. "
             "Check that model artifacts exist and that run tags are complete."
         )
+
+    if not models:
+        _logger.warning("No models loaded — API will start without prediction capability.")
 
     return models
 
 
-def validate_environment() -> PipelineConfig:
+def validate_environment() -> tuple[PipelineConfig, DeploymentConfig]:
     """Validate that the runtime environment is correctly configured.
 
     Checks that the pipeline config and deployment config can be loaded
     and that the MLflow tracking store is accessible.
 
-    Returns the loaded PipelineConfig for use by ``load_all_production_models``.
+    Returns:
+        A ``(PipelineConfig, DeploymentConfig)`` tuple for use by the
+        application lifespan and ``load_all_production_models``.
 
     Raises:
         RuntimeError: If any required configuration is missing or invalid.
@@ -276,5 +311,9 @@ def validate_environment() -> PipelineConfig:
             "Production model required at startup (allowed_stage=%s).",
             deploy_config.model.allowed_stage,
         )
+    else:
+        _logger.info(
+            "Production model NOT required at startup — API may start with zero models.",
+        )
 
-    return config
+    return config, deploy_config

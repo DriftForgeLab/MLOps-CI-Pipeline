@@ -11,6 +11,8 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
+from src.common.io import atomic_write_text
+
 
 def _ask(prompt: str, valid: dict) -> str:
     hint = ", ".join(f"{k} = {v}" for k, v in valid.items())
@@ -68,8 +70,7 @@ def _generate_image_dataset_yaml(dataset_dir: Path) -> None:
     }
 
     output_path = dataset_dir / "dataset.yaml"
-    with open(output_path, "w") as f:
-        yaml.dump(metadata, f, default_flow_style=False, sort_keys=False)
+    atomic_write_text(output_path, yaml.dump(metadata, default_flow_style=False, sort_keys=False))
 
     print(f"  dataset.yaml created for '{dataset_dir.name}'.")
 
@@ -108,7 +109,12 @@ def generate_for_dataset(dataset_dir: Path) -> None:
     description = _ask_text("  Short description", default="")
 
     features = [col for col in df.columns if col != target]
-    type_map = {"float64": "float", "int64": "int", "object": "string", "bool": "bool"}
+    type_map = {
+        "float64": "float", "float32": "float", "Float64": "float",
+        "int64": "int", "int32": "int", "Int64": "int",
+        "object": "string", "string": "string", "category": "string",
+        "bool": "bool", "boolean": "bool",
+    }
     schema = {col: type_map.get(str(dtype), "string") for col, dtype in df.dtypes.items()}
 
     # Build constraints block — auto-populated from data, no additional prompts needed.
@@ -134,8 +140,7 @@ def generate_for_dataset(dataset_dir: Path) -> None:
     }
 
     output_path = dataset_dir / "dataset.yaml"
-    with open(output_path, "w") as f:
-        yaml.dump(metadata, f, default_flow_style=False, sort_keys=False)
+    atomic_write_text(output_path, yaml.dump(metadata, default_flow_style=False, sort_keys=False))
 
     print(f"  dataset.yaml created for '{dataset_dir.name}'.")
 

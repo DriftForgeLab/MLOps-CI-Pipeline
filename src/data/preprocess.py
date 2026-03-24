@@ -594,6 +594,7 @@ def run_preprocessing(
     version_id: str,
     prep_config_path: Path,
     processed_dir: Path = Path("data/processed"),
+    random_seed: int | None = None,
 ) -> None:
     """Run the preprocessing step for a given dataset version.
 
@@ -628,7 +629,7 @@ def run_preprocessing(
     # --- Dispatch to image preprocessing if needed ---
     if isinstance(metadata, dict) and metadata.get("task_type") in ("image_classification", "image_classification_cnn"):
         from src.data.image_preprocess import run_image_preprocessing
-        run_image_preprocessing(dataset_name, version_id, prep_config_path, processed_dir)
+        run_image_preprocessing(dataset_name, version_id, prep_config_path, processed_dir, random_seed=random_seed)
         return
 
     # --- Load preprocessing config ---

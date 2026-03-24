@@ -112,8 +112,9 @@ class TestValidateEnvironment:
         mock_load_cfg.return_value = config
         mock_load_deploy.return_value = _make_deploy_config()
 
-        result = validate_environment()
-        assert result is config
+        result_config, result_deploy = validate_environment()
+        assert result_config is config
+        assert result_deploy is mock_load_deploy.return_value
 
 
 # ── _find_all_production_versions ───────────────────────────────────────────
@@ -201,6 +202,7 @@ class TestLoadSingleProductionModel:
         assert info.feature_names == ["f1", "f2"]
         assert info.model_name == "iris-clf"
         assert info.stage == "Production"
+        assert info.model_format == "sklearn"
 
     def test_loads_pytorch_model(self, monkeypatch, tmp_path):
         monkeypatch.chdir(tmp_path)
@@ -219,6 +221,7 @@ class TestLoadSingleProductionModel:
         info = _load_single_production_model(client, "img-clf", pv)
         # With the torch stub, torch.load returns None; with real torch, it loads
         assert isinstance(info, ProductionModelInfo)
+        assert info.model_format == "pytorch"
 
     def test_no_model_file_raises(self, monkeypatch, tmp_path):
         monkeypatch.chdir(tmp_path)
@@ -304,7 +307,7 @@ class TestLoadAllProductionModels:
         good_info.algorithm = "rf"
         mock_load.side_effect = [good_info, RuntimeError("corrupt")]
 
-        result = load_all_production_models(_make_config())
+        result = load_all_production_models(_make_config(), _make_deploy_config())
         assert "good-model" in result
         assert "bad-model" not in result
 
@@ -317,4 +320,15 @@ class TestLoadAllProductionModels:
         mock_load.side_effect = RuntimeError("fail")
 
         with pytest.raises(RuntimeError, match="No Production models could be loaded"):
-            load_all_production_models(_make_config())
+            load_all_production_models(_make_config(), _make_deploy_config())
+
+    @patch("src.deployment.startup_checks._find_all_production_versions")
+    @patch("src.deployment.startup_checks.get_mlflow_client")
+    def test_require_false_allows_empty(self, mock_client, mock_find):
+        """When require_production_model=False, zero models is not an error."""
+        mock_client.return_value = MagicMock()
+        mock_find.side_effect = RuntimeError("No Production model found anywhere")
+
+        deploy = _make_deploy_config(require_production=False)
+        result = load_all_production_models(_make_config(), deploy)
+        assert result == {}
