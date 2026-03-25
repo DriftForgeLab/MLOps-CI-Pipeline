@@ -13,15 +13,22 @@ from dataclasses import dataclass, field
 # ---------------------------------------------------------------------------
 
 VALID_TASK_TYPES: frozenset[str] = {"classification", "regression", "image_classification", "image_classification_cnn"} #!!! May need to update VALIDATE and REQUIRED to ENUM in later sprints
+IMAGE_TASK_TYPES: frozenset[str] = frozenset({"image_classification", "image_classification_cnn"})
+CLASSIFICATION_TASK_TYPES: frozenset[str] = frozenset({"classification"}) | IMAGE_TASK_TYPES
+SKLEARN_TASK_TYPES: frozenset[str] = frozenset({"classification", "regression", "image_classification"})
 VALID_LOG_LEVELS: frozenset[str] = {"DEBUG", "INFO", "WARNING", "ERROR"}
 VALID_PIPELINE_STAGES: frozenset[str] = {"preprocessing", "training", "evaluation", "deployment", "promotion"} #!!! May need to update the validation of Deploymeny in later sprints
-VALID_ALGORITHMS: frozenset[str] = {"random_forest", "logistic_regression", "linear_regression"}
+VALID_ALGORITHMS: frozenset[str] = {"random_forest", "logistic_regression", "linear_regression", "cnn"}
 VALID_SOLVERS: frozenset[str] = {"lbfgs", "saga", "liblinear"}
 VALID_CLASS_WEIGHTS: frozenset[str] = {"balanced"} ## May need other weights later
 
 REQUIRED_MODEL_KEYS: frozenset[str] = {"algorithm", "hyperparameters"}
+_OPTIONAL_MODEL_KEYS: frozenset[str] = frozenset({"architecture"})
 RF_HYPERPARAMS_KEYS: frozenset[str] = {"n_estimators", "max_depth", "min_samples_split", "class_weight"}
 LR_HYPERPARAMS_KEYS: frozenset[str] = {"C", "solver", "max_iter", "class_weight"}
+CNN_HYPERPARAMS_KEYS: frozenset[str] = {"epochs", "batch_size", "learning_rate"}
+CNN_ARCHITECTURE_KEYS: frozenset[str] = {"conv_layers", "fc_units", "dropout"}
+CNN_CONV_LAYER_KEYS: frozenset[str] = {"out_channels", "kernel_size"}
 
 REQUIRED_TOP_LEVEL_KEYS: frozenset[str] = {"project", "task_type", "random_seed", "pipeline_stages", "output_dir", "data", "configs", "log_level", "dataset"}
 
@@ -115,9 +122,27 @@ class LinearRegressionHyperparams:
     pass
 
 @dataclass(frozen=True)
+class CnnConvLayerConfig:
+    out_channels: int
+    kernel_size: int
+
+@dataclass(frozen=True)
+class CnnArchitectureConfig:
+    conv_layers: tuple[CnnConvLayerConfig, ...]
+    fc_units: int
+    dropout: float
+
+@dataclass(frozen=True)
+class CnnHyperparams:
+    epochs: int = 10
+    batch_size: int = 32
+    learning_rate: float = 0.001
+
+@dataclass(frozen=True)
 class ModelConfig:
     algorithm: str
-    hyperparameters: RandomForestHyperparams | LogisticRegressionHyperparams | LinearRegressionHyperparams
+    hyperparameters: RandomForestHyperparams | LogisticRegressionHyperparams | LinearRegressionHyperparams | CnnHyperparams
+    architecture: CnnArchitectureConfig | None = None
 
 @dataclass(frozen=True)
 class TrainingConfig:

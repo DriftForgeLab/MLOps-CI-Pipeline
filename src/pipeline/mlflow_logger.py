@@ -8,6 +8,7 @@ import mlflow
 
 from src.config.loader import PipelineConfig
 from src.registry.model_registry import MODEL_ARTIFACT_SUBPATH
+from src.training import TrainingResult
 
 _logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ def configure_mlflow(
     _logger.info("MLflow run started: %s (execution_id=%s)", run_name, pipeline_execution_id)
 
 
-def log_training_to_mlflow(result) -> None:
+def log_training_to_mlflow(result: TrainingResult) -> None:
     """Log training params and tags to the active MLflow run."""
     if not mlflow.active_run():
         _logger.warning("No active MLflow run — skipping training param/tag logging.")

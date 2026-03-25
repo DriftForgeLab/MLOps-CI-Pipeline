@@ -49,21 +49,27 @@ def request_approval(report: dict) -> ApprovalResult:
     print("  [2] Reject  — block promotion (reason required)")
     print("  [Q] Cancel  — abort without decision")
 
-    decision = input("\nYour decision [1/2/Q]: ").strip().lower()
+    try:
+        decision = input("\nYour decision [1/2/Q]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        decision = "q"
 
     if decision == "1":
         logger.info("  Approval gate: APPROVED by user.")
         return ApprovalResult(approved=True)
 
     if decision == "2":
-        reason = input("Rejection reason (mandatory): ").strip()
+        try:
+            reason = input("Rejection reason (mandatory): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            reason = ""
         if not reason:
             logger.warning("  Approval gate: REJECTED — no reason provided. Pipeline stopped.")
             return ApprovalResult(approved=False, reason=None)
         logger.info("  Approval gate: REJECTED by user. Reason: %s", reason)
         return ApprovalResult(approved=False, reason=reason)
 
-    # Anything else (Q, empty, Ctrl+C, etc.) is treated as cancellation
+    # Anything else (Q, empty, EOF, Ctrl+C, etc.) is treated as cancellation
     logger.warning("  Approval gate: CANCELLED — no decision provided. Pipeline stopped.")
     return ApprovalResult(approved=False, reason=None)
 
@@ -94,7 +100,10 @@ def _print_summary(report: dict) -> None:
             for metric_name, data in per_metric.items():
                 delta = data.get("delta")
                 verdict = data.get("verdict", "")
-                sign = "+" if delta and delta > 0 else ""
-                print(f"    {metric_name:<20} {sign}{delta:.4f}  ({verdict})")
+                if delta is not None:
+                    sign = "+" if delta > 0 else ""
+                    print(f"    {metric_name:<20} {sign}{delta:.4f}  ({verdict})")
+                else:
+                    print(f"    {metric_name:<20} {'N/A':<10}  ({verdict})")
 
     print("\n" + "=" * 60)

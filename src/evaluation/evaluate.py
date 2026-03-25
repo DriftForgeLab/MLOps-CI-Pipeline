@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 
 from src.config.loader import PipelineConfig, load_evaluation_config, load_promotion_config
+from src.config.schema import CLASSIFICATION_TASK_TYPES, IMAGE_TASK_TYPES
 from src.data.preprocess import PREPROCESSED_SUBDIR
 from src.promotion.comparator import compare_metrics, no_baseline_comparison
 
@@ -81,7 +82,7 @@ def evaluate(
     target: str = feature_map["target"]
 
     # --- Load val split ---
-    if config.task_type in ("image_classification", "image_classification_cnn"):
+    if config.task_type in IMAGE_TASK_TYPES:
         val_npz_path = preprocessed_dir / "val.npz"
         if not val_npz_path.exists():
             raise FileNotFoundError(
@@ -112,7 +113,7 @@ def evaluate(
     promotion_config = load_promotion_config(Path(config.configs.promotion))
     task_config = (
         promotion_config.classification
-        if config.task_type in ("classification", "image_classification", "image_classification_cnn")
+        if config.task_type in CLASSIFICATION_TASK_TYPES
         else promotion_config.regression
     )
     metrics_to_compare = [rule.metric for rule in task_config.rules]
@@ -148,7 +149,7 @@ def evaluate(
 
 def _compute_metrics(y_true, y_pred, task_type: str, eval_config) -> dict:
     """Compute metrics based on task type."""
-    if task_type in ("classification", "image_classification", "image_classification_cnn"):
+    if task_type in CLASSIFICATION_TASK_TYPES:
         from sklearn.metrics import (
             accuracy_score, confusion_matrix, f1_score, precision_score, recall_score,
         )

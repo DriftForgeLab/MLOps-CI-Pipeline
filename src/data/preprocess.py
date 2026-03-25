@@ -48,6 +48,7 @@ from sklearn.preprocessing import (
 
 from src.common.io import atomic_write_csv, atomic_write_json, atomic_write_pickle
 from src.config.loader import PreprocessingConfig, load_preprocessing_config
+from src.config.schema import IMAGE_TASK_TYPES
 from src.data.validate import _is_dtype_compatible, validate_dataset, validate_split_data
 
 logger = logging.getLogger(__name__)
@@ -627,7 +628,7 @@ def run_preprocessing(
             metadata = yaml.safe_load(_f)
 
     # --- Dispatch to image preprocessing if needed ---
-    if isinstance(metadata, dict) and metadata.get("task_type") in ("image_classification", "image_classification_cnn"):
+    if isinstance(metadata, dict) and metadata.get("task_type") in IMAGE_TASK_TYPES:
         from src.data.image_preprocess import run_image_preprocessing
         run_image_preprocessing(dataset_name, version_id, prep_config_path, processed_dir, random_seed=random_seed)
         return

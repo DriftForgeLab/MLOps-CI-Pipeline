@@ -1,11 +1,9 @@
 # =============================================================================
-# src/training/image_classification/train.py — Image classification training
+# src/training/_tabular.py — Shared tabular training logic
 # =============================================================================
-# Responsibility: Train a classification model on preprocessed image data
-# (flattened numpy vectors from NPZ archives) and return the fitted estimator
-# with training metadata.
-#
-# Follows the same contract as classification/train.py — returns TrainingResult.
+# Responsibility: Common training flow for tabular datasets (CSV-based).
+# Used by classification/train.py and regression/train.py, which are thin
+# wrappers that pass the appropriate task_type.
 # =============================================================================
 
 import json
@@ -13,7 +11,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-import numpy as np
+import pandas as pd
 import yaml
 
 from src.config.loader import PipelineConfig, load_training_config
@@ -24,22 +22,25 @@ from src.training import TrainingResult
 logger = logging.getLogger(__name__)
 
 
-def run_training(config: PipelineConfig, version_id: str) -> TrainingResult:
+def run_tabular_training(config: PipelineConfig, version_id: str, task_type: str) -> TrainingResult:
     """
-    Train a classification model on preprocessed image data (NPZ).
+    Train a model on preprocessed tabular data (CSV).
 
-    Loads flattened image vectors from train.npz and class metadata from
-    feature_map.json. Uses the same model factory as tabular classification.
+    Feature and target columns are loaded from feature_map.json (written by
+    the preprocessing stage). This removes all positional column inference
+    and raises loudly if the CSV columns do not match the contract.
 
     Args:
         config:     Validated PipelineConfig from load_config()
         version_id: Dataset version ID from versioning step
+        task_type:  "classification" or "regression"
 
     Returns:
         TrainingResult with fitted model and training metadata.
 
     Raises:
         FileNotFoundError: If preprocessed data or feature_map.json is missing.
+        ValueError:        If CSV columns do not match feature_map.json contract.
     """
     training_config = load_training_config(Path(config.configs.training))
 
@@ -55,6 +56,7 @@ def run_training(config: PipelineConfig, version_id: str) -> TrainingResult:
         )
     with open(feature_map_path) as f:
         feature_map = json.load(f)
+    expected_features: list[str] = feature_map["output_features"]
     target: str = feature_map["target"]
 
     # --- Load dataset.yaml to confirm target (belt-and-suspenders) ---
@@ -70,35 +72,38 @@ def run_training(config: PipelineConfig, version_id: str) -> TrainingResult:
                 "Re-run preprocessing to regenerate feature_map.json."
             )
 
-    # --- Load preprocessed training data from NPZ ---
-    train_npz_path = preprocessed_dir / "train.npz"
-    if not train_npz_path.exists():
+    preprocessed_path = preprocessed_dir / "train.csv"
+    if not preprocessed_path.exists():
         raise FileNotFoundError(
-            f"Preprocessed training data not found: {train_npz_path}"
+            f"Preprocessed training data not found: {preprocessed_path}"
         )
 
-    data = np.load(train_npz_path)
-    X, y = data["X"], data["y"]
+    df = pd.read_csv(preprocessed_path)
 
-    if X.ndim != 2:
+    # --- Loud mismatch error: CSV columns must match feature_map contract ---
+    expected_cols = expected_features + [target]
+    actual_cols = list(df.columns)
+    if actual_cols != expected_cols:
         raise ValueError(
-            f"image_classification expects 2D flattened features (N, D), "
-            f"got shape {X.shape}. Ensure flatten=true in preprocessing config."
+            f"Preprocessed train.csv columns do not match feature_map.json contract.\n"
+            f"  Expected: {expected_cols}\n"
+            f"  Actual:   {actual_cols}\n"
+            "Re-run preprocessing to regenerate train.csv and feature_map.json."
         )
 
-    model = create_model(
-        training_config, task_type="image_classification", random_seed=config.random_seed
-    )
+    X = df[expected_features].values
+    y = df[target].values
+
+    model = create_model(training_config, task_type=task_type, random_seed=config.random_seed)
     model.fit(X, y)
 
     hp = training_config.model.hyperparameters
-    hyperparameters = {k: v for k, v in vars(hp).items()}
+    hyperparameters = dict(vars(hp))
 
     logger.info(
-        "  Training complete: algorithm=%s, samples=%d, features=%d",
+        "  Training complete: algorithm=%s, rows=%d",
         training_config.model.algorithm,
-        X.shape[0],
-        X.shape[1],
+        len(df),
     )
 
     return TrainingResult(
@@ -108,5 +113,5 @@ def run_training(config: PipelineConfig, version_id: str) -> TrainingResult:
         dataset_version_id=version_id,
         random_seed=config.random_seed,
         trained_at=datetime.now(timezone.utc).isoformat(),
-        train_rows=X.shape[0],
+        train_rows=len(df),
     )

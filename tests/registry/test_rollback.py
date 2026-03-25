@@ -276,7 +276,7 @@ def test_complete_rollback_audit_sets_governance_tags(tmp_path, monkeypatch):
 
     run_id = _make_run()
     v1 = register_approved_model(config, run_id)
-    promote_to_production(config, v1.version, run_id)
+    promote_to_production(config, v1.version, run_id, promoted_by="rollback-cli")
 
     model_name = resolve_model_name(config)
     client = get_mlflow_client(config)

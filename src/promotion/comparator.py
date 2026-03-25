@@ -131,7 +131,7 @@ def compare_metrics(
     else:
         overall = "mixed"
 
-    is_better = overall in {"better", "mixed"}
+    is_better = overall == "better"
 
     return {
         "has_production_model": True,

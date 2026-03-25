@@ -1,6 +1,13 @@
 # =============================================================================
 # src/training/image_classification_cnn/train.py — CNN image classification
 # =============================================================================
+# Responsibility: Train a PyTorch CNN on preprocessed image data (NPZ with 4D
+# arrays) and return the fitted model with training metadata.
+#
+# Uses validated CnnArchitectureConfig and CnnHyperparams from the config
+# system — no raw YAML parsing. Follows the same TrainingResult contract as
+# all other training modules.
+# =============================================================================
 from __future__ import annotations
 
 import json
@@ -11,10 +18,11 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
 import yaml
+from torch.utils.data import DataLoader, TensorDataset
 
-from src.config.loader import PipelineConfig
+from src.config.loader import PipelineConfig, load_training_config
+from src.config.schema import CnnArchitectureConfig, CnnHyperparams
 from src.data.preprocess import PREPROCESSED_SUBDIR
 from src.training import TrainingResult
 
@@ -22,33 +30,45 @@ logger = logging.getLogger(__name__)
 
 
 class SimpleCNN(nn.Module):
-    """Simple configurable CNN for image classification."""
+    """Simple configurable CNN for image classification.
 
-    def __init__(self, num_classes: int, in_channels: int, image_size: int, arch_config: dict):
+    Supports non-square images by tracking height and width independently
+    through pooling layers.
+    """
+
+    def __init__(
+        self,
+        num_classes: int,
+        in_channels: int,
+        image_height: int,
+        image_width: int,
+        arch: CnnArchitectureConfig,
+    ):
         super().__init__()
+        self.in_channels = in_channels
         layers: list[nn.Module] = []
         current_channels = in_channels
-        current_size = image_size
+        current_h = image_height
+        current_w = image_width
 
-        for conv in arch_config["conv_layers"]:
-            out_ch = conv["out_channels"]
-            k = conv["kernel_size"]
+        for conv in arch.conv_layers:
             layers += [
-                nn.Conv2d(current_channels, out_ch, kernel_size=k, padding=k // 2),
-                nn.BatchNorm2d(out_ch),
+                nn.Conv2d(current_channels, conv.out_channels, kernel_size=conv.kernel_size, padding=conv.kernel_size // 2),
+                nn.BatchNorm2d(conv.out_channels),
                 nn.ReLU(),
                 nn.MaxPool2d(2),
             ]
-            current_channels = out_ch
-            current_size = current_size // 2
+            current_channels = conv.out_channels
+            current_h = current_h // 2
+            current_w = current_w // 2
 
-        flat_size = current_channels * current_size * current_size
+        flat_size = current_channels * current_h * current_w
         layers += [
             nn.Flatten(),
-            nn.Linear(flat_size, arch_config["fc_units"]),
+            nn.Linear(flat_size, arch.fc_units),
             nn.ReLU(),
-            nn.Dropout(arch_config["dropout"]),
-            nn.Linear(arch_config["fc_units"], num_classes),
+            nn.Dropout(arch.dropout),
+            nn.Linear(arch.fc_units, num_classes),
         ]
         self.net = nn.Sequential(*layers)
 
@@ -56,9 +76,11 @@ class SimpleCNN(nn.Module):
         return self.net(x)
 
     def predict(self, X: np.ndarray) -> np.ndarray:
-        """sklearn-compatible predict interface."""
+        """sklearn-compatible predict interface. Accepts NHWC or NCHW input."""
         self.eval()
         with torch.no_grad():
+            if X.ndim == 4 and X.shape[1] != self.in_channels:
+                X = X.transpose(0, 3, 1, 2)
             tensor = torch.tensor(X, dtype=torch.float32)
             output = self.net(tensor)
             return output.argmax(dim=1).numpy()
@@ -78,33 +100,45 @@ def run_training(config: PipelineConfig, version_id: str) -> TrainingResult:
     Returns:
         TrainingResult with fitted CNN model and training metadata.
     """
-    import yaml as _yaml
-    training_cfg_path = Path(config.configs.training)
-    with open(training_cfg_path) as f:
-        training_cfg = _yaml.safe_load(f)
-
-    arch = training_cfg["model"]["architecture"]
-    hp = training_cfg["model"]["hyperparameters"]
-    epochs = hp["epochs"]
-    batch_size = hp["batch_size"]
-    lr = hp["learning_rate"]
+    training_config = load_training_config(Path(config.configs.training))
+    arch: CnnArchitectureConfig = training_config.model.architecture
+    hp: CnnHyperparams = training_config.model.hyperparameters
 
     version_dir = Path(config.data.processed) / config.dataset / version_id
     preprocessed_dir = version_dir / PREPROCESSED_SUBDIR
 
-    # Load feature map
+    # --- Load feature contract from feature_map.json ---
     feature_map_path = preprocessed_dir / "feature_map.json"
     if not feature_map_path.exists():
-        raise FileNotFoundError(f"feature_map.json not found at '{feature_map_path}'.")
+        raise FileNotFoundError(
+            f"feature_map.json not found at '{feature_map_path}'. "
+            "Run the preprocessing stage before training."
+        )
     with open(feature_map_path) as f:
         feature_map = json.load(f)
 
+    target: str = feature_map["target"]
+
+    # --- Load dataset.yaml to confirm target (belt-and-suspenders) ---
+    yaml_path = version_dir / "dataset.yaml"
+    if yaml_path.exists():
+        with open(yaml_path) as f:
+            meta = yaml.safe_load(f)
+        yaml_target = meta.get("target")
+        if yaml_target and yaml_target != target:
+            raise ValueError(
+                f"Target mismatch: feature_map.json says '{target}' "
+                f"but dataset.yaml says '{yaml_target}'. "
+                "Re-run preprocessing to regenerate feature_map.json."
+            )
+
     num_classes = len(feature_map["class_names"])
     image_shape = feature_map["image_shape"]  # [H, W, C]
-    image_size = image_shape[0]
+    image_height = image_shape[0]
+    image_width = image_shape[1]
     in_channels = image_shape[2] if len(image_shape) == 3 else 1
 
-    # Load NPZ data
+    # --- Load NPZ data ---
     train_npz_path = preprocessed_dir / "train.npz"
     if not train_npz_path.exists():
         raise FileNotFoundError(f"Preprocessed training data not found: {train_npz_path}")
@@ -130,14 +164,14 @@ def run_training(config: PipelineConfig, version_id: str) -> TrainingResult:
 
     dataset = TensorDataset(X_tensor, y_tensor)
     shuffle_gen = torch.Generator().manual_seed(config.random_seed)
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, generator=shuffle_gen)
+    loader = DataLoader(dataset, batch_size=hp.batch_size, shuffle=True, generator=shuffle_gen)
 
-    model = SimpleCNN(num_classes, in_channels, image_size, arch)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    model = SimpleCNN(num_classes, in_channels, image_height, image_width, arch)
+    optimizer = torch.optim.Adam(model.parameters(), lr=hp.learning_rate)
     criterion = nn.CrossEntropyLoss()
 
     model.train()
-    for epoch in range(epochs):
+    for epoch in range(hp.epochs):
         total_loss = 0.0
         for X_batch, y_batch in loader:
             optimizer.zero_grad()
@@ -147,24 +181,25 @@ def run_training(config: PipelineConfig, version_id: str) -> TrainingResult:
             optimizer.step()
             total_loss += loss.item()
         avg_loss = total_loss / len(loader)
-        logger.info("  Epoch %d/%d — loss: %.4f", epoch + 1, epochs, avg_loss)
+        logger.info("  Epoch %d/%d — loss: %.4f", epoch + 1, hp.epochs, avg_loss)
 
     logger.info(
         "  CNN training complete: %d classes, %d samples",
         num_classes, len(X_tensor),
     )
 
+    hyperparameters = dict(vars(hp))
+    hyperparameters["conv_layers"] = [
+        {"out_channels": c.out_channels, "kernel_size": c.kernel_size}
+        for c in arch.conv_layers
+    ]
+    hyperparameters["fc_units"] = arch.fc_units
+    hyperparameters["dropout"] = arch.dropout
+
     return TrainingResult(
         model=model,
-        algorithm="cnn",
-        hyperparameters={
-            "epochs": epochs,
-            "batch_size": batch_size,
-            "learning_rate": lr,
-            "conv_layers": arch["conv_layers"],
-            "fc_units": arch["fc_units"],
-            "dropout": arch["dropout"],
-        },
+        algorithm=training_config.model.algorithm,
+        hyperparameters=hyperparameters,
         dataset_version_id=version_id,
         random_seed=config.random_seed,
         trained_at=datetime.now(timezone.utc).isoformat(),

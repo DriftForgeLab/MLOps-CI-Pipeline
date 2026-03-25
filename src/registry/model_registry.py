@@ -268,8 +268,9 @@ def get_production_model_metrics(config: PipelineConfig) -> dict | None:
         _logger.info("No Production model found in registry for '%s'", model_name)
         return None
     if len(versions) > 1:
+        versions.sort(key=lambda v: int(v.version), reverse=True)
         _logger.warning(
-            "Found %d Production versions for '%s' — expected 1. Using version %s.",
+            "Found %d Production versions for '%s' — expected 1. Using highest version %s.",
             len(versions), model_name, versions[0].version,
         )
     prod_run_id = versions[0].run_id

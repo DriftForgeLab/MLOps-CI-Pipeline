@@ -6,21 +6,22 @@
 # =============================================================================
 
 import logging
-from pathlib import Path
 
-from src.config.loader import PromotionConfig, PromotionRule, load_promotion_config
+from src.config.loader import PromotionConfig, PromotionRule
+from src.config.schema import CLASSIFICATION_TASK_TYPES
 
 logger = logging.getLogger(__name__)
 
 
 def _evaluate_rule(rule: PromotionRule, observed: float) -> bool:
     """Evaluate a single rule. Returns True if passed, False if violated."""
+    _EQUAL_TOLERANCE = 1e-6
     ops = {
         ">=": observed >= rule.threshold,
         "<=": observed <= rule.threshold,
         ">":  observed > rule.threshold,
         "<":  observed < rule.threshold,
-        "==": observed == rule.threshold,
+        "==": abs(observed - rule.threshold) <= _EQUAL_TOLERANCE,
     }
     return ops[rule.operator]
 
@@ -50,7 +51,7 @@ def run_promotion_rules(
         - description: str
     """
     task_config = (
-        promotion_config.classification if task_type in ("classification", "image_classification", "image_classification_cnn") else promotion_config.regression
+        promotion_config.classification if task_type in CLASSIFICATION_TASK_TYPES else promotion_config.regression
     )
 
     violations: list[dict] = []
@@ -58,9 +59,17 @@ def run_promotion_rules(
     for rule in task_config.rules:
         if rule.metric not in metrics:
             logger.warning(
-                "Rule '%s' references metric '%s' which is not in evaluation report — skipping.",
+                "Rule '%s' references metric '%s' which is not in evaluation report — failing.",
                 rule.id, rule.metric,
             )
+            violations.append({
+                "rule_id":     rule.id,
+                "metric":      rule.metric,
+                "observed":    None,
+                "threshold":   rule.threshold,
+                "operator":    rule.operator,
+                "description": f"Metric '{rule.metric}' not found in evaluation report",
+            })
             continue
 
         observed = float(metrics[rule.metric])

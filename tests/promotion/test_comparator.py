@@ -103,7 +103,7 @@ class TestCompareMetrics:
             ["accuracy", "f1_score"],
         )
         assert result["overall_verdict"] == "mixed"
-        assert result["is_better"] is True
+        assert result["is_better"] is False
 
     def test_empty_metrics_to_compare_returns_equal(self):
         result = compare_metrics({"accuracy": 0.9}, {"accuracy": 0.8}, [])

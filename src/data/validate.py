@@ -18,6 +18,8 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
+from src.config.schema import CLASSIFICATION_TASK_TYPES, IMAGE_TASK_TYPES, VALID_TASK_TYPES
+
 logger = logging.getLogger(__name__)
 
 ### !!! IMPORTANT: This file needs to be updated later, it needs stronger validation
@@ -88,7 +90,7 @@ def validate_dataset(dataset_name: str, version_id: str, processed_dir: Path = P
     # Read metadata early to determine task_type before checking data.csv
     with open(yaml_path, "r") as f:
         metadata_peek = yaml.safe_load(f)
-    is_image = isinstance(metadata_peek, dict) and metadata_peek.get("task_type") in ("image_classification", "image_classification_cnn")
+    is_image = isinstance(metadata_peek, dict) and metadata_peek.get("task_type") in IMAGE_TASK_TYPES
 
     if not is_image and not csv_path.exists():
         errors.append(f"Missing data.csv in {version_dir}")
@@ -113,15 +115,15 @@ def validate_dataset(dataset_name: str, version_id: str, processed_dir: Path = P
             ", ".join(sorted(extra_top)),
         )
 
-    if metadata.get("task_type") not in {"classification", "regression", "image_classification", "image_classification_cnn"}:
-        errors.append(f"Invalid task_type '{metadata.get('task_type')}' — must be one of: classification, regression, image_classification, image_classification_cnn")
+    if metadata.get("task_type") not in VALID_TASK_TYPES:
+        errors.append(f"Invalid task_type '{metadata.get('task_type')}' — must be one of: {', '.join(sorted(VALID_TASK_TYPES))}")
 
     if errors:
         _fail(errors)
 
     task_type = metadata["task_type"]
 
-    if task_type in ("image_classification", "image_classification_cnn"):
+    if task_type in IMAGE_TASK_TYPES:
         _validate_image_dataset(version_dir, metadata, errors)
     else:
         _validate_tabular_dataset(csv_path, metadata, errors)

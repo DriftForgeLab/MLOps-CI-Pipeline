@@ -14,6 +14,7 @@ from pathlib import Path
 import yaml
 
 from src.common.io import atomic_write_text
+from src.config.schema import IMAGE_TASK_TYPES
 from src.data.image_utils import compute_folder_hash
 
 
@@ -34,7 +35,7 @@ def create_dataset_version(dataset_name: str, raw_dir: Path = Path("data/raw"), 
 
     task_type = metadata.get("task_type", "")
 
-    if task_type in ("image_classification", "image_classification_cnn"):
+    if task_type in IMAGE_TASK_TYPES:
         return _create_image_version(raw_dataset_dir, dataset_name, metadata, processed_dir)
     else:
         return _create_tabular_version(raw_dataset_dir, dataset_name, metadata, processed_dir)

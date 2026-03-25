@@ -20,6 +20,7 @@ import yaml
 from sklearn.model_selection import train_test_split
 
 from src.common.io import atomic_write_csv, atomic_write_json, atomic_write_text
+from src.config.schema import IMAGE_TASK_TYPES
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,7 @@ def split_dataset(
         metadata = yaml.safe_load(f)
 
     # Dispatch to image splitting if task_type is image_classification
-    if metadata.get("task_type") in ("image_classification", "image_classification_cnn"):
+    if metadata.get("task_type") in IMAGE_TASK_TYPES:
         from src.data.image_split import split_image_dataset
         split_image_dataset(dataset_name, version_id, random_seed, train_ratio, val_ratio, processed_dir)
         return

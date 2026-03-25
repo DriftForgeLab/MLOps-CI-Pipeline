@@ -212,10 +212,6 @@ def _complete_rollback_audit(
     version_str = str(target_version.version)
     previous_version_number = int(previous_production.version) if previous_production else None
 
-    # Overwrite promoted_by: promote_to_production hardcodes "pipeline", which is
-    # wrong for operator-initiated rollbacks.
-    client.set_model_version_tag(model_name, version_str, "promotion.promoted_by", "rollback-cli")
-
     # Replace decision_run_id: promote_to_production sets it to the training run_id,
     # which is not the decision authority for a rollback. Use a rollback-specific ID.
     rollback_id = f"rollback:{timestamp_str}"
@@ -425,7 +421,7 @@ def _execute_rollback(
     )
 
     # Step 2: Execute production promotion (irreversible registry state change)
-    promote_to_production(config, target_version_number, run_id)
+    promote_to_production(config, target_version_number, run_id, promoted_by="rollback-cli")
 
     # Step 3: Complete post-promotion audit — mandatory, not best-effort.
     # If this fails, registry state has changed but governance trail is incomplete.

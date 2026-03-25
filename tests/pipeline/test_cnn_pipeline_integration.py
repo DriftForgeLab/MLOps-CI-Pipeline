@@ -242,7 +242,7 @@ def test_cnn_model_artifact_is_saved(tmp_path):
 
     mock_config = _make_mock_config(dataset_name, processed_dir, cfg_paths)
     result = run_cnn_training(mock_config, version_id)
-    model_dir = save_model_artifact(result, run_id=version_id, artifact_dir=artifact_dir)
+    model_dir = save_model_artifact(result, run_id=version_id, task_type="image_classification_cnn", artifact_dir=artifact_dir)
 
     assert (model_dir / "model.pt").exists(), "model.pt must be saved for CNN models"
     assert (model_dir / "metadata.json").exists()
@@ -276,7 +276,7 @@ def test_cnn_evaluation_produces_confusion_matrix(tmp_path):
     # --- Training + artifact saving ---
     mock_config = _make_mock_config(dataset_name, processed_dir, cfg_paths)
     result = run_cnn_training(mock_config, version_id)
-    save_model_artifact(result, run_id=version_id, artifact_dir=artifact_dir)
+    save_model_artifact(result, run_id=version_id, task_type="image_classification_cnn", artifact_dir=artifact_dir)
 
     # --- Evaluation (no production baseline) ---
     with patch("src.registry.model_registry.get_production_model_metrics", return_value=None):

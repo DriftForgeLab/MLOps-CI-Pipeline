@@ -23,6 +23,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
+from src.common.io import atomic_write_json
 from src.pipeline.steps import StageResult
 
 logger = logging.getLogger(__name__)
@@ -62,9 +63,10 @@ def build_run_report(
     """
     Build the run report as a plain dict ready for JSON serialization.
 
-    Pure function — no I/O, no side effects, no logging. Takes primitive
-    values and StageResult objects, returns a dict. Easy to test by
-    asserting on the returned dict without mocking anything.
+    No I/O, no side effects, no logging. Generates the timestamp
+    internally via datetime.now(timezone.utc). Takes primitive values
+    and StageResult objects, returns a dict. Easy to test by asserting
+    on the returned dict without mocking anything.
     
     Returns:
         Dict matching the run_report.json schema.
@@ -104,9 +106,7 @@ def write_run_report(report: dict, output_dir: str) -> Path:
     out_path.mkdir(parents=True, exist_ok=True)
 
     report_file = out_path / "run_report.json"
-
-    with open(report_file, "w", encoding="utf-8") as f:
-        json.dump(report, f, indent=2, ensure_ascii=False)
+    atomic_write_json(report_file, report)
 
     logger.info("Run report written to: %s", report_file.resolve())
     return report_file.resolve()

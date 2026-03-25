@@ -92,7 +92,7 @@ def _training_stage(config: PipelineConfig, version_id: str) -> None:
     else:
         raise ValueError(f"Unsupported task_type: '{config.task_type}'")
 
-    artifact_path = save_model_artifact(result, run_id=version_id)
+    artifact_path = save_model_artifact(result, run_id=version_id, task_type=config.task_type)
     log_training_to_mlflow(result)
     preprocessed_dir = (
         Path(config.data.processed) / config.dataset / version_id / PREPROCESSED_SUBDIR

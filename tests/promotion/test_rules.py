@@ -38,6 +38,8 @@ class TestEvaluateRule:
             ("<", 0.20, 0.20, False),
             ("==", 0.90, 0.90, True),
             ("==", 0.89, 0.90, False),
+            ("==", 0.90 + 1e-7, 0.90, True),   # within tolerance
+            ("==", 0.90 + 2e-6, 0.90, False),   # outside tolerance
         ],
     )
     def test_operator_evaluation(self, operator, observed, threshold, expected):
@@ -93,7 +95,7 @@ class TestRunPromotionRules:
         )
         assert len(violations) == 2
 
-    def test_missing_metric_is_skipped(self):
+    def test_missing_metric_is_a_violation(self):
         config = _make_config([
             _make_rule("r1", "accuracy", 0.80),
             _make_rule("r2", "nonexistent_metric", 0.50),
@@ -102,7 +104,12 @@ class TestRunPromotionRules:
             {"accuracy": 0.90},
             "classification", config,
         )
-        assert violations == []
+        assert len(violations) == 1
+        v = violations[0]
+        assert v["rule_id"] == "r2"
+        assert v["metric"] == "nonexistent_metric"
+        assert v["observed"] is None
+        assert "not found" in v["description"]
 
     def test_empty_rules_returns_empty(self):
         config = _make_config([])

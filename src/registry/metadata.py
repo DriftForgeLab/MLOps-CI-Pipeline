@@ -10,14 +10,13 @@
 #       metadata.json      ← training context
 # =============================================================================
 
-import json
 import logging
 
 from pathlib import Path
 
 import joblib
-import torch
 
+from src.common.io import atomic_write_json
 from src.training import TrainingResult
 
 logger = logging.getLogger(__name__)
@@ -26,6 +25,7 @@ logger = logging.getLogger(__name__)
 def save_model_artifact(
     result: TrainingResult,
     run_id: str,
+    task_type: str,
     artifact_dir: Path = Path("artifacts/runs"),
 ) -> Path:
     """
@@ -37,6 +37,7 @@ def save_model_artifact(
     Args:
         result:       TrainingResult from run_training()
         run_id:       Unique identifier for this pipeline run (e.g. config_hash)
+        task_type:    Task type from pipeline config (e.g. "classification", "image_classification")
         artifact_dir: Base directory for all run artifacts
 
     Returns:
@@ -46,20 +47,13 @@ def save_model_artifact(
     model_dir.mkdir(parents=True, exist_ok=True)
 
     if hasattr(result.model, 'state_dict'):
+        import torch
         model_path = model_dir / "model.pt"
         torch.save(result.model, model_path)
     else:
         model_path = model_dir / "model.joblib"
         joblib.dump(result.model, model_path)
     logger.info("  Model saved to: %s", model_path.resolve())
-
-    model_type_name = type(result.model).__name__
-    if "Classifier" in model_type_name:
-        task_type = "classification"
-    elif model_type_name == "SimpleCNN":
-        task_type = "image_classification_cnn"
-    else:
-        task_type = "regression"
 
     metadata = {
         "task_type": task_type,
@@ -72,8 +66,7 @@ def save_model_artifact(
     }
 
     metadata_path = model_dir / "metadata.json"
-    with open(metadata_path, "w") as f:
-        json.dump(metadata, f, indent=2)
+    atomic_write_json(metadata_path, metadata)
     logger.info("  Metadata saved to: %s", metadata_path.resolve())
 
     return model_dir
