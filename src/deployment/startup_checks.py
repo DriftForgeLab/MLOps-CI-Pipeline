@@ -277,7 +277,7 @@ def validate_environment() -> tuple[PipelineConfig, DeploymentConfig]:
         RuntimeError: If any required configuration is missing or invalid.
     """
     config_path_str = os.environ.get(
-        "PIPELINE_CONFIG_PATH", "src/config/pipeline.yaml"
+        "PIPELINE_CONFIG_PATH", "src/config/pipeline_tabular.yaml"
     )
     config_path = Path(config_path_str)
 

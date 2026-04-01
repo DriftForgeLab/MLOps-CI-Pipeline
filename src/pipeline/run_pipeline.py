@@ -39,7 +39,7 @@ def _parse_args() -> argparse.Namespace:
         "--config",
         type = str,
         required = True,
-        help = "Path to pipeline config file (e.g., src/config/pipeline.yaml)"
+        help = "Path to pipeline config file (e.g., src/config/pipeline_tabular.yaml)"
     )
     return parser.parse_args()
 

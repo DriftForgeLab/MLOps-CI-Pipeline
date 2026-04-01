@@ -74,7 +74,9 @@ def _create_image_version(
     if not images_dir.exists():
         raise FileNotFoundError(f"No images/ directory found in {raw_dataset_dir}")
 
-    version_id = compute_folder_hash(images_dir)
+    image_props = metadata.get("image_properties") or {}
+    expected_formats = image_props.get("expected_formats")
+    version_id = compute_folder_hash(images_dir, expected_formats)
 
     version_dir = processed_dir / dataset_name / version_id
     if version_dir.exists():

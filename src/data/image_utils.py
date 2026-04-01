@@ -14,7 +14,7 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_IMAGE_EXTENSIONS: frozenset[str] = frozenset({".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff"})
+SUPPORTED_IMAGE_EXTENSIONS: frozenset[str] = frozenset({".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".dng"})
 
 
 def scan_image_folder(
@@ -63,21 +63,31 @@ def build_manifest_df(image_entries: list[tuple[Path, str]]) -> pd.DataFrame:
     )
 
 
-def compute_folder_hash(images_dir: Path) -> str:
+def compute_folder_hash(
+    images_dir: Path,
+    expected_formats: list[str] | None = None,
+) -> str:
     """Compute a SHA-256 hash of a sorted manifest (relative paths + file sizes).
 
     Hashing all pixel data is too slow for large datasets. Instead, hash the
     sorted list of (relative_path, file_size) pairs as a practical proxy.
 
     Args:
-        images_dir: Path to the images/ directory.
+        images_dir:       Path to the images/ directory.
+        expected_formats: List of allowed extensions (e.g. [".dng", ".png"]).
+                          Defaults to SUPPORTED_IMAGE_EXTENSIONS when None.
 
     Returns:
         First 12 characters of the SHA-256 hex digest.
     """
+    allowed = (
+        frozenset(ext.lower() for ext in expected_formats)
+        if expected_formats is not None
+        else SUPPORTED_IMAGE_EXTENSIONS
+    )
     entries: list[str] = []
     for img_path in sorted(images_dir.rglob("*")):
-        if img_path.is_file() and img_path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
+        if img_path.is_file() and img_path.suffix.lower() in allowed:
             rel = img_path.relative_to(images_dir)
             entries.append(f"{rel}:{img_path.stat().st_size}")
 

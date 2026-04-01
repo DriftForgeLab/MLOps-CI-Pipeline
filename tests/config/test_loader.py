@@ -9,7 +9,7 @@ CONFIG_DIR = Path(__file__).parent.parent.parent / "src" / "config"
 # ---------------------------------------------------------------------------
 
 def test_load_config_valid():
-    config = load_config(CONFIG_DIR / "pipeline.yaml")
+    config = load_config(CONFIG_DIR / "pipeline_tabular.yaml")
     assert config.task_type == "classification"
     assert config.random_seed == 42
     assert config.log_level == "INFO"
@@ -105,7 +105,7 @@ def test_load_training_config_bad_n_estimators(tmp_path):
 # ---------------------------------------------------------------------------
 # _validate_section unit tests
 # ---------------------------------------------------------------------------
-from src.config.loader import _validate_section
+from src.config.validation import _validate_section
 
 class TestValidateSection:
     def test_valid_section_returns_dict_and_no_errors(self):
@@ -139,7 +139,7 @@ class TestValidateSection:
 # ---------------------------------------------------------------------------
 # _validate_enum unit tests
 # ---------------------------------------------------------------------------
-from src.config.loader import _validate_enum
+from src.config.validation import _validate_enum
 
 class TestValidateEnum:
     def test_valid_value_no_error(self):
@@ -167,7 +167,7 @@ class TestValidateEnum:
 # ---------------------------------------------------------------------------
 # _validate_positive_int unit tests
 # ---------------------------------------------------------------------------
-from src.config.loader import _validate_positive_int
+from src.config.validation import _validate_positive_int
 
 class TestValidatePositiveInt:
     @pytest.mark.parametrize("value", [1, 10, 100, 999])
@@ -221,8 +221,8 @@ class TestValidatePositiveInt:
 # ---------------------------------------------------------------------------
 
 def test_load_config_image_classification():
-    config = load_config(CONFIG_DIR / "pipeline_image_classification.yaml")
-    assert config.task_type == "image_classification"
+    config = load_config(CONFIG_DIR / "pipeline_image.yaml")
+    assert config.task_type == "image_classification_cnn"
     assert config.dataset == "sample_images"
 
 
@@ -233,7 +233,7 @@ def test_load_preprocessing_config_with_image_section():
     assert prep.image.target_size == (64, 64)
     assert prep.image.color_mode == "rgb"
     assert prep.image.normalize is True
-    assert prep.image.flatten is True
+    assert prep.image.flatten is False
     assert prep.image.augmentation.enabled is False
 
 
@@ -260,6 +260,167 @@ def test_image_config_invalid_target_size(tmp_path):
         "    rotation_degrees: 0\n    augmentation_factor: 1\n"
     )
     with pytest.raises(ValueError, match="target_size"):
+        load_preprocessing_config(cfg)
+
+
+# ---------------------------------------------------------------------------
+# ISP config loading tests
+# ---------------------------------------------------------------------------
+
+def test_load_preprocessing_raw_cnn_roundtrip():
+    """preprocessing_raw_cnn.yaml must load cleanly and produce a valid ISPConfig."""
+    from src.config.loader import load_preprocessing_config
+    prep = load_preprocessing_config(CONFIG_DIR / "preprocessing_raw_cnn.yaml")
+
+    assert prep.image is not None
+    assert prep.image.raw_input is True
+    assert prep.image.isp is not None
+
+    isp = prep.image.isp
+    assert isp.black_level_correction.enabled is True
+    assert isp.black_level_correction.black_level is None   # reads from DNG
+    assert isp.demosaicing.algorithm == "bilinear"
+    assert isp.white_balance.r_gain is None                 # reads from DNG
+    assert isp.white_balance.g_gain is None
+    assert isp.white_balance.b_gain is None
+    assert isp.color_correction.enabled is True
+    assert isp.color_correction.matrix is None              # reads from DNG
+    assert isp.denoising.algorithm == "gaussian"
+    assert isp.denoising.strength == 0.5
+    assert isp.sharpening.algorithm == "unsharp_mask"
+    assert isp.sharpening.radius == 1.0
+    assert isp.sharpening.amount == 1.0
+    assert isp.gamma_correction.gamma == 2.2
+
+
+def test_raw_input_true_without_isp_block_raises(tmp_path):
+    """raw_input: true without an isp: block must fail validation."""
+    from src.config.loader import load_preprocessing_config
+    cfg = tmp_path / "bad.yaml"
+    cfg.write_text(
+        _PREP_CONFIG_YAML
+        + "\nimage:\n  target_size: [64, 64]\n  color_mode: rgb\n"
+        "  normalize: true\n  flatten: false\n  raw_input: true\n"
+        "  augmentation:\n    enabled: false\n    horizontal_flip: false\n"
+        "    rotation_degrees: 0\n    augmentation_factor: 1\n"
+    )
+    with pytest.raises(ValueError, match="raw_input"):
+        load_preprocessing_config(cfg)
+
+
+def test_isp_gamma_out_of_range_raises(tmp_path):
+    from src.config.loader import load_preprocessing_config
+    cfg = tmp_path / "bad.yaml"
+    cfg.write_text(
+        _PREP_CONFIG_YAML
+        + "\nimage:\n  target_size: [64, 64]\n  color_mode: rgb\n"
+        "  normalize: true\n  flatten: false\n  raw_input: true\n"
+        "  augmentation:\n    enabled: false\n    horizontal_flip: false\n"
+        "    rotation_degrees: 0\n    augmentation_factor: 1\n"
+        "  isp:\n    gamma_correction:\n      gamma: 5.0\n"
+    )
+    with pytest.raises(ValueError, match="gamma"):
+        load_preprocessing_config(cfg)
+
+
+def test_isp_invalid_demosaicing_algorithm_raises(tmp_path):
+    from src.config.loader import load_preprocessing_config
+    cfg = tmp_path / "bad.yaml"
+    cfg.write_text(
+        _PREP_CONFIG_YAML
+        + "\nimage:\n  target_size: [64, 64]\n  color_mode: rgb\n"
+        "  normalize: true\n  flatten: false\n  raw_input: true\n"
+        "  augmentation:\n    enabled: false\n    horizontal_flip: false\n"
+        "    rotation_degrees: 0\n    augmentation_factor: 1\n"
+        "  isp:\n    demosaicing:\n      algorithm: nearest_neighbor\n"
+    )
+    with pytest.raises(ValueError, match="demosaicing"):
+        load_preprocessing_config(cfg)
+
+
+def test_isp_white_balance_gain_out_of_range_raises(tmp_path):
+    from src.config.loader import load_preprocessing_config
+    cfg = tmp_path / "bad.yaml"
+    cfg.write_text(
+        _PREP_CONFIG_YAML
+        + "\nimage:\n  target_size: [64, 64]\n  color_mode: rgb\n"
+        "  normalize: true\n  flatten: false\n  raw_input: true\n"
+        "  augmentation:\n    enabled: false\n    horizontal_flip: false\n"
+        "    rotation_degrees: 0\n    augmentation_factor: 1\n"
+        "  isp:\n    white_balance:\n      r_gain: 5.0\n"  # > 2.0
+    )
+    with pytest.raises(ValueError, match="r_gain"):
+        load_preprocessing_config(cfg)
+
+
+def test_isp_black_level_wrong_length_raises(tmp_path):
+    from src.config.loader import load_preprocessing_config
+    cfg = tmp_path / "bad.yaml"
+    cfg.write_text(
+        _PREP_CONFIG_YAML
+        + "\nimage:\n  target_size: [64, 64]\n  color_mode: rgb\n"
+        "  normalize: true\n  flatten: false\n  raw_input: true\n"
+        "  augmentation:\n    enabled: false\n    horizontal_flip: false\n"
+        "    rotation_degrees: 0\n    augmentation_factor: 1\n"
+        "  isp:\n    black_level_correction:\n      black_level: [512, 512]\n"  # need 4
+    )
+    with pytest.raises(ValueError, match="black_level"):
+        load_preprocessing_config(cfg)
+
+
+def test_isp_explicit_black_level_roundtrips_as_tuple(tmp_path):
+    """An explicit black_level list in YAML must be stored as a tuple of floats."""
+    from src.config.loader import load_preprocessing_config
+    cfg = tmp_path / "ok.yaml"
+    cfg.write_text(
+        _PREP_CONFIG_YAML
+        + "\nimage:\n  target_size: [64, 64]\n  color_mode: rgb\n"
+        "  normalize: true\n  flatten: false\n  raw_input: true\n"
+        "  augmentation:\n    enabled: false\n    horizontal_flip: false\n"
+        "    rotation_degrees: 0\n    augmentation_factor: 1\n"
+        "  isp:\n    black_level_correction:\n      black_level: [512, 513, 514, 515]\n"
+    )
+    prep = load_preprocessing_config(cfg)
+    bl = prep.image.isp.black_level_correction.black_level
+    assert bl == (512.0, 513.0, 514.0, 515.0)
+    assert isinstance(bl, tuple)
+
+
+def test_isp_all_algorithms_accepted(tmp_path):
+    """Every algorithm listed in VALID_*_ALGORITHMS must pass loader validation."""
+    from src.config.loader import load_preprocessing_config
+    from src.config.schema import (
+        VALID_DEMOSAICING_ALGORITHMS,
+        VALID_DENOISING_ALGORITHMS,
+        VALID_SHARPENING_ALGORITHMS,
+    )
+
+    def _make_cfg(demosaicing="bilinear", denoising="gaussian", sharpening="unsharp_mask"):
+        return (
+            _PREP_CONFIG_YAML
+            + "\nimage:\n  target_size: [64, 64]\n  color_mode: rgb\n"
+            "  normalize: true\n  flatten: false\n  raw_input: true\n"
+            "  augmentation:\n    enabled: false\n    horizontal_flip: false\n"
+            "    rotation_degrees: 0\n    augmentation_factor: 1\n"
+            f"  isp:\n"
+            f"    demosaicing:\n      algorithm: {demosaicing}\n"
+            f"    denoising:\n      algorithm: {denoising}\n      strength: 0.5\n"
+            f"    sharpening:\n      algorithm: {sharpening}\n      radius: 1.0\n      amount: 1.0\n"
+        )
+
+    for algo in VALID_DEMOSAICING_ALGORITHMS:
+        cfg = tmp_path / f"d_{algo}.yaml"
+        cfg.write_text(_make_cfg(demosaicing=algo))
+        load_preprocessing_config(cfg)  # must not raise
+
+    for algo in VALID_DENOISING_ALGORITHMS:
+        cfg = tmp_path / f"dn_{algo}.yaml"
+        cfg.write_text(_make_cfg(denoising=algo))
+        load_preprocessing_config(cfg)
+
+    for algo in VALID_SHARPENING_ALGORITHMS:
+        cfg = tmp_path / f"sh_{algo}.yaml"
+        cfg.write_text(_make_cfg(sharpening=algo))
         load_preprocessing_config(cfg)
 
 

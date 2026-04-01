@@ -20,7 +20,7 @@ def _write_minimal_config(tmp_path: Path, mlflow_block: str = "") -> Path:
         "  evaluation: data/evaluation\n"
         "  drift_scenarios: data/drift\n"
         "configs:\n"
-        "  preprocessing: src/config/preprocessing.yaml\n"
+        "  preprocessing: src/config/preprocessing_tabular.yaml\n"
         "  training: src/config/training_classification.yaml\n"
         "  evaluation: src/config/evaluation.yaml\n"
         "  deployment: src/config/deployment.yaml\n"

@@ -187,7 +187,7 @@ def _resolve_feature_types(
             else:
                 logger.warning(
                     "Column '%s' has unknown schema type '%s'; treating as numeric. "
-                    "Add an explicit override in preprocessing.yaml if this is wrong.",
+                    "Add an explicit override in preprocessing_tabular.yaml if this is wrong.",
                     col,
                     declared_type,
                 )
@@ -200,7 +200,7 @@ def _resolve_feature_types(
     if uncovered:
         resolution_errors.append(
             f"Features not assigned to any type: {sorted(uncovered)}. "
-            "Add them to numeric_features or categorical_features in preprocessing.yaml, "
+            "Add them to numeric_features or categorical_features in preprocessing_tabular.yaml, "
             "or ensure they have a recognised schema type (float/int/string/bool)."
         )
 

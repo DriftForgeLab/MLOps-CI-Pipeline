@@ -1,37 +1,30 @@
 project:
   name: "lightweight-mlops-pipeline"
   version: "0.1.0"
-
-task_type: "classification"
-
+task_type: "image_classification_cnn"
 random_seed: 42
-
 pipeline_stages:
   - "preprocessing"
   - "training"
   - "evaluation"
   - "promotion"
-
 output_dir: "outputs"
 
-dataset: iris
+dataset: drone_raw  # change to any raw DNG dataset name under data/raw/
 
 data:
   raw: "data/raw"
   processed: "data/processed"
   evaluation: "data/evaluation"
   drift_scenarios: "data/drift_scenarios"
-
 configs:
-  preprocessing: "src/config/preprocessing.yaml"
-  training: "src/config/training_classification.yaml"
+  preprocessing: "src/config/preprocessing_raw_cnn.yaml"
+  training: "src/config/training_image_cnn.yaml"
   evaluation: "src/config/evaluation.yaml"
   deployment: "src/config/deployment.yaml"
   promotion: "src/config/promotion.yaml"
-
 log_level: "INFO"
-
 mlflow:
-  tracking_uri: null        # env var MLFLOW_TRACKING_URI used if null; null = local mlruns/
-  experiment_name: null     # defaults to project.name if null
-  registry_model_name: null # defaults to "{project.name}-{task_type}" if null
+  tracking_uri: null
+  experiment_name: null
+  registry_model_name: null

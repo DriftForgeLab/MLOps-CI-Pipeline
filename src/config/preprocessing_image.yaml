@@ -1,51 +1,40 @@
 # =============================================================================
-# src/config/preprocessing_image.yaml — Image preprocessing configuration
+# src/config/preprocessing_image.yaml — CNN image preprocessing configuration
 # =============================================================================
 # Controls image-specific preprocessing: resize, normalization, augmentation.
 # Tabular options (encoding, scaling, missing_values) are ignored for images.
+#
+# Used with task_type: image_classification_cnn for standard JPG/PNG datasets.
+# For raw DNG datasets requiring ISP preprocessing, use preprocessing_raw_cnn.yaml.
 # =============================================================================
 
-# ---------------------------------------------------------------------------
-# Data contract enforcement
-# ---------------------------------------------------------------------------
 fail_on_nulls: true
 min_rows: 10
 validate_types: false
 validate_labels: true
 validate_on_skip: false
-
-# ---------------------------------------------------------------------------
-# Tabular feature overrides (unused for image datasets)
-# ---------------------------------------------------------------------------
 numeric_features: null
 categorical_features: null
-
 encoding:
   enabled: false
   strategy: "onehot"
   handle_unknown: "ignore"
   min_frequency: null
-
 scaling:
   enabled: false
   strategy: "standard"
-
 missing_values:
   policy: "passthrough"
   numeric_strategy: "mean"
   categorical_strategy: "most_frequent"
   fill_value: null
-
-# ---------------------------------------------------------------------------
-# Image preprocessing
-# ---------------------------------------------------------------------------
 image:
-  target_size: [64, 64]       # (height, width) — resize all images to this
-  color_mode: "rgb"           # "rgb" or "grayscale"
-  normalize: true             # scale to [0,1] then channel-wise normalization
-  flatten: true               # flatten to 1D vector for sklearn
+  target_size: [64, 64]
+  color_mode: "rgb"
+  normalize: true
+  flatten: false
   augmentation:
     enabled: false
     horizontal_flip: false
     rotation_degrees: 0
-    augmentation_factor: 1    # 1 = no augmentation
+    augmentation_factor: 1

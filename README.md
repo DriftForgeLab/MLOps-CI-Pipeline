@@ -1,14 +1,14 @@
 # MLOps-CI-Pipeline
+
 An end-to-end MLOps pipeline demonstrating automated retraining, evaluation-based promotion, versioned deployment, and data drift monitoring, designed for a bachelor-level engineering project.
 
 ## Requirements
 
-This project requires Python 3.12.x.
-Other versions are not officially supported.
+Python 3.12.x is required. Other versions are not officially supported.
 
 ## Setup
 
-### 1. Create virtual environment (Python 3.12 required)
+### 1. Create virtual environment
 
 **macOS / Linux**
 ```bash
@@ -22,103 +22,138 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\Activate
 ```
 
-### 2. Upgrade pip
+### 2. Install project in editable mode
 ```bash
-python -m pip install --upgrade pip
-```
-
-### 3. Install project in editable mode
-```bash
+pip install --upgrade pip
 pip install -e .
 ```
 
-## How to Run
+## CLI commands
 
-**Run tests**
+All commands become available after `pip install -e .`.
+
+### Run pipeline
+
+Runs the full pipeline: versioning → validation → split → preprocessing → training → evaluation → promotion. All data preparation is handled automatically.
+
+```bash
+# Tabular classification (CSV datasets)
+run-pipeline --config src/config/pipeline_tabular.yaml
+
+# Image classification — CNN with PyTorch (JPG/PNG)
+run-pipeline --config src/config/pipeline_image.yaml
+
+# Raw DNG images through ISP pipeline → CNN
+run-pipeline --config src/config/pipeline_raw_cnn.yaml
+```
+
+> **First run with a new dataset:** if `dataset.yaml` is missing, the pipeline will prompt
+> you interactively for target column and task type. This only happens once.
+
+### Roll back a model
+
+Rolls back the Production model to a previous registry version. Omit `--version` to roll
+back to the most recent Staging version. `--yes` skips the confirmation prompt.
+
+```bash
+rollback-model --config src/config/pipeline_tabular.yaml
+rollback-model --config src/config/pipeline_tabular.yaml --version 2 --reason "accuracy regression" --yes
+```
+
+### Start the prediction API
+
+Starts the FastAPI prediction service. Host and port are read from `src/config/deployment.yaml`.
+Requires at least one model promoted to Production via `run-pipeline` first.
+
+```bash
+run-api
+```
+
+The API exposes:
+- `GET /health` — liveness check
+- `POST /predict` — single-sample prediction (JSON body)
+
+### Run tests
+
 ```bash
 python -m pytest tests/ -v --tb=short
 ```
 
-**Run pipeline**
+## Docker
+
+The prediction service can be deployed as a Docker container. It loads the current
+Production model from the MLflow registry at startup.
+
 ```bash
-run-pipeline --config src/config/pipeline.yaml
+# Prerequisites: a Production model must exist (run pipeline and approve first)
+run-pipeline --config src/config/pipeline_tabular.yaml
+
+# Copy environment template
+cp .env.example .env
+
+# Build and start
+docker compose -f docker/docker-compose.yml up --build
+
+# Verify
+curl http://localhost:8000/health
+
+# Stop
+docker compose -f docker/docker-compose.yml down
+
+# Rebuild after config/code changes without losing volumes
+docker compose -f docker/docker-compose.yml up --build --force-recreate
 ```
 
-> **First run**: If a dataset is missing `dataset.yaml`, the pipeline will prompt
-> you interactively to provide target column and task type. This only happens once —
-> subsequent runs skip the prompt automatically.
+## MLflow tracking UI
 
-## Pipeline Stages
+Browse experiments, runs, metrics, and registered models:
 
-The pipeline executes the following stages in order:
+```bash
+mlflow ui --backend-store-uri mlruns
+```
 
-| Stage          | Status      | Description                            |
-|---|---|---|
-| `preprocessing`| Implemented | Selects feature and target columns from each split, writes to  `preprocessed/`  |
-| `training`     | Placeholder | Model training — not yet implemented   |
-| `evaluation`   | Placeholder | Model evaluation — not yet implemented |
-| `deployment`   | Placeholder | Model deployment — not yet implemented |
+Open `http://localhost:5000` in a browser.
 
-## Data Flow
+## Pipeline stages
+
+| Stage          | Description                                                                 |
+|----------------|-----------------------------------------------------------------------------|
+| `preprocessing`| Selects features, normalises, writes `preprocessed/` (CSV or NPZ)          |
+| `training`     | Trains the model defined in `training_*.yaml`; saves artifact to registry   |
+| `evaluation`   | Computes metrics (accuracy, F1, etc.) and drift tests against reference data |
+| `promotion`    | Promotes model to Production if promotion rules pass; requests approval if configured |
+
+## Data flow
 
 **Tabular datasets:**
 ```
 data/raw/<dataset>/data.csv
-        ↓  ingestion + versioning
+        ↓  versioning
 data/processed/<dataset>/<version_id>/data.csv  +  train/  val/  test/
         ↓  preprocessing
 data/processed/<dataset>/<version_id>/preprocessed/  train.csv  val.csv  test.csv
 ```
 
-**Image datasets:**
+**Image datasets (JPG/PNG):**
 ```
-data/raw/<dataset>/images/{class}/...
-        ↓  versioning + stratified splitting
-data/processed/<dataset>/<version_id>/train/images/{class}/...
-        ↓  preprocessing (resize, normalize, flatten)
+data/raw/<dataset>/images/<class>/...
+        ↓  versioning + stratified split
+data/processed/<dataset>/<version_id>/{train,val,test}/images/<class>/...
+        ↓  preprocessing (resize, normalise, flatten)
 data/processed/<dataset>/<version_id>/preprocessed/  train.npz  val.npz  test.npz
 ```
 
-Preprocessing reads column definitions (`target`, `features`) from the versioned `dataset.yaml` — no separate config file is needed.
-
-## Deployment
-
-The prediction service runs as a Docker container that loads the current
-Production model from the MLflow registry at startup.
-
-```bash
-# 1. Make sure a Production model exists (run pipeline and approve)
-run-pipeline --config src/config/pipeline.yaml
-
-# 2. Copy environment template
-cp .env.example .env
-
-# 3. Build and start the container
-docker compose -f docker/docker-compose.yml up --build
-
-# 4. Verify
-curl http://localhost:8000/health
+**Raw DNG datasets (ISP pipeline):**
+```
+data/raw/<dataset>/images/<class>/*.DNG
+        ↓  versioning + stratified split
+data/processed/<dataset>/<version_id>/{train,val,test}/images/<class>/*.DNG
+        ↓  ISP pipeline (black level → demosaicing → white balance →
+           colour correction → denoising → sharpening → gamma)
+        ↓  resize, normalise, flatten
+data/processed/<dataset>/<version_id>/preprocessed/  train.npz  val.npz  test.npz
 ```
 
-See [docs/deployment.md](docs/deployment.md) for full configuration,
-model governance details, and troubleshooting.
+## Adding datasets
 
-
-## Image Classification
-
-The pipeline supports image classification datasets using the ImageFolder
-convention. Place class-labeled images under `data/raw/<name>/images/{class}/`
-with a `dataset.yaml` specifying `task_type: image_classification`.
-```bash
-# sklearn-based (flattened pixel vectors)
-run-pipeline --config src/config/pipeline_image_classification.yaml
-
-# CNN-based with PyTorch (spatial feature learning, recommended for drift analysis)
-run-pipeline --config src/config/pipeline_image_cnn.yaml
-```
-
-See [docs/image_datasets.md](docs/image_datasets.md) for folder structure,
-preprocessing configuration, augmentation, and limitations.
-
-## Adding Datasets
 See `data/raw/README.md` for instructions on how to add new datasets.

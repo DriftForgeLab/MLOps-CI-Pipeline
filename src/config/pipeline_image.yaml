@@ -1,36 +1,29 @@
 project:
   name: "lightweight-mlops-pipeline"
   version: "0.1.0"
-
-task_type: "image_classification"
-
+task_type: "image_classification_cnn"
 random_seed: 42
-
 pipeline_stages:
   - "preprocessing"
   - "training"
   - "evaluation"
   - "promotion"
-
 output_dir: "outputs"
 
-dataset: sample_images
+dataset: sample_images  # change to any JPG/PNG image dataset name under data/raw/
 
 data:
   raw: "data/raw"
   processed: "data/processed"
   evaluation: "data/evaluation"
   drift_scenarios: "data/drift_scenarios"
-
 configs:
   preprocessing: "src/config/preprocessing_image.yaml"
-  training: "src/config/training_classification.yaml"
+  training: "src/config/training_image_cnn.yaml"
   evaluation: "src/config/evaluation.yaml"
   deployment: "src/config/deployment.yaml"
   promotion: "src/config/promotion.yaml"
-
 log_level: "INFO"
-
 mlflow:
   tracking_uri: null
   experiment_name: null

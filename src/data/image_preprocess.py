@@ -23,9 +23,12 @@ import yaml
 from src.common.io import atomic_write_json, atomic_write_npz, atomic_write_pickle
 from src.config.loader import PreprocessingConfig, load_preprocessing_config
 from src.data.image_utils import compute_folder_hash, scan_image_folder
+from src.config.schema import ISPConfig
 
 logger = logging.getLogger(__name__)
 
+# Bump this whenever the ISP pipeline logic changes (not just config) to
+# invalidate cached preprocessed NPZ files and force re-preprocessing.
 PIPELINE_VERSION = "1.0.0"
 PREPROCESSED_SUBDIR = "preprocessed"
 
@@ -68,6 +71,89 @@ def _load_and_transform_images(
 
     if not arrays:
         raise ValueError(f"No readable images found in {images_dir}")
+
+    return np.stack(arrays), labels, paths
+
+
+def _load_and_transform_raw_images(
+    images_dir: Path,
+    img_config,
+    expected_formats: list[str] | None,
+) -> tuple[np.ndarray, list[str], list[Path]]:
+    """Load DNG raw images, run ISP pipeline, resize, return numpy arrays.
+
+    This is the raw-input counterpart of _load_and_transform_images.
+    Resize is performed on the float array (no intermediate uint8 conversion)
+    to avoid unnecessary precision loss. Output is scaled to [0, 255] to match
+    the existing contract expected by the normalization step in the caller.
+
+    Args:
+        images_dir:       Path to an ImageFolder split's images/ directory.
+        img_config:       Validated ImagePreprocessingConfig (raw_input=True).
+        expected_formats: Allowed file extensions from dataset.yaml.
+
+    Returns:
+        (images_array, labels, paths) where images_array has shape (N, H, W, C)
+        with values in [0, 255] float64 — same contract as _load_and_transform_images.
+    """
+    try:
+        import rawpy
+    except ImportError:
+        raise ImportError(
+            "rawpy is required for DNG image loading. Install with: pip install rawpy"
+        )
+
+    try:
+        from skimage.transform import resize as skimage_resize
+    except ImportError:
+        raise ImportError(
+            "scikit-image is required for float-preserving resize. "
+            "Install with: pip install scikit-image"
+        )
+
+    from src.data.isp_pipeline import run_isp, read_camera_params
+
+    entries = scan_image_folder(images_dir, expected_formats)
+    if not entries:
+        raise ValueError(f"No images found in {images_dir}")
+
+    target_h, target_w = img_config.target_size
+    arrays = []
+    labels = []
+    paths = []
+
+    for img_path, class_name in entries:
+        try:
+            # Read raw Bayer data — copy immediately to free rawpy object
+            with rawpy.imread(str(img_path)) as raw:
+                raw_array = raw.raw_image_visible.copy().astype(np.float32)
+
+            # Read camera parameters from DNG metadata
+            camera_params = read_camera_params(img_path)
+
+            # Run ISP pipeline → float64 RGB in [0, 1]
+            rgb = run_isp(raw_array, img_config.isp, camera_params)
+
+            # Resize on float array (no precision loss from uint8 conversion)
+            if img_config.color_mode == "grayscale":
+                # Convert to luminance using ITU-R BT.601 coefficients
+                luma = 0.299 * rgb[..., 0] + 0.587 * rgb[..., 1] + 0.114 * rgb[..., 2]
+                arr = skimage_resize(luma, (target_h, target_w), anti_aliasing=True)
+            else:
+                arr = skimage_resize(
+                    rgb, (target_h, target_w, 3), anti_aliasing=True
+                )
+
+            # Scale to [0, 255] to match the contract of _load_and_transform_images
+            arr = arr * 255.0
+            arrays.append(arr)
+            labels.append(class_name)
+            paths.append(img_path)
+        except Exception as e:
+            logger.warning("Skipping unreadable raw image '%s': %s", img_path, e)
+
+    if not arrays:
+        raise ValueError(f"No readable raw images found in {images_dir}")
 
     return np.stack(arrays), labels, paths
 
@@ -150,7 +236,11 @@ def run_image_preprocessing(
 
     # Idempotency check (includes training manifest hash for content sensitivity)
     train_images_dir = version_dir / "train" / "images"
-    train_manifest_hash = compute_folder_hash(train_images_dir) if train_images_dir.exists() else ""
+    train_manifest_hash = (
+        compute_folder_hash(train_images_dir, expected_formats)
+        if train_images_dir.exists()
+        else ""
+    )
     preprocess_hash = _compute_image_preprocess_hash(img_config, metadata, train_manifest_hash)
     existing_meta = _load_existing_metadata(preprocessed_dir)
     if existing_meta and existing_meta.get("preprocess_hash") == preprocess_hash and _outputs_exist(preprocessed_dir):
@@ -159,10 +249,23 @@ def run_image_preprocessing(
 
     preprocessed_dir.mkdir(parents=True, exist_ok=True)
 
+    # Validate raw_input requires isp config
+    if img_config.raw_input and img_config.isp is None:
+        raise ValueError(
+            "image.raw_input is True but no 'image.isp' block is configured. "
+            "Add an 'isp:' section to your preprocessing config, or use "
+            "preprocessing_raw_cnn.yaml as a starting point."
+        )
+
     # Build class mapping from training split (cached for reuse in the loop)
-    X_train_raw, train_labels, _ = _load_and_transform_images(
-        train_images_dir, img_config.target_size, img_config.color_mode, expected_formats
-    )
+    if img_config.raw_input:
+        X_train_raw, train_labels, _ = _load_and_transform_raw_images(
+            train_images_dir, img_config, expected_formats
+        )
+    else:
+        X_train_raw, train_labels, _ = _load_and_transform_images(
+            train_images_dir, img_config.target_size, img_config.color_mode, expected_formats
+        )
 
     class_names = sorted(set(train_labels))
     class_to_index = {name: idx for idx, name in enumerate(class_names)}
@@ -206,9 +309,14 @@ def run_image_preprocessing(
             X_raw, labels = X_train_raw.copy(), list(train_labels)
         else:
             split_images_dir = version_dir / split_name / "images"
-            X_raw, labels, _ = _load_and_transform_images(
-                split_images_dir, img_config.target_size, img_config.color_mode, expected_formats
-            )
+            if img_config.raw_input:
+                X_raw, labels, _ = _load_and_transform_raw_images(
+                    split_images_dir, img_config, expected_formats
+                )
+            else:
+                X_raw, labels, _ = _load_and_transform_images(
+                    split_images_dir, img_config.target_size, img_config.color_mode, expected_formats
+                )
 
         # Normalize using training statistics
         if img_config.normalize:
@@ -290,23 +398,26 @@ def run_image_preprocessing(
 
 
 def _compute_image_preprocess_hash(img_config, metadata: dict, train_manifest_hash: str = "") -> str:
-    canonical = json.dumps(
-        {
-            "pipeline_version": PIPELINE_VERSION,
-            "target_size": list(img_config.target_size),
-            "color_mode": img_config.color_mode,
-            "normalize": img_config.normalize,
-            "flatten": img_config.flatten,
-            "augmentation_enabled": img_config.augmentation.enabled,
-            "augmentation_factor": img_config.augmentation.augmentation_factor,
-            "horizontal_flip": img_config.augmentation.horizontal_flip,
-            "rotation_degrees": img_config.augmentation.rotation_degrees,
-            "task_type": metadata.get("task_type"),
-            "target": metadata.get("target"),
-            "train_manifest_hash": train_manifest_hash,
-        },
-        sort_keys=True,
-    )
+    import dataclasses
+    canonical_data: dict = {
+        "pipeline_version": PIPELINE_VERSION,
+        "target_size": list(img_config.target_size),
+        "color_mode": img_config.color_mode,
+        "normalize": img_config.normalize,
+        "flatten": img_config.flatten,
+        "augmentation_enabled": img_config.augmentation.enabled,
+        "augmentation_factor": img_config.augmentation.augmentation_factor,
+        "horizontal_flip": img_config.augmentation.horizontal_flip,
+        "rotation_degrees": img_config.augmentation.rotation_degrees,
+        "raw_input": img_config.raw_input,
+        "task_type": metadata.get("task_type"),
+        "target": metadata.get("target"),
+        "train_manifest_hash": train_manifest_hash,
+    }
+    if img_config.isp is not None:
+        # dataclasses.asdict recursively converts nested dataclasses to dicts
+        canonical_data["isp"] = dataclasses.asdict(img_config.isp)
+    canonical = json.dumps(canonical_data, sort_keys=True)
     return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
 
 

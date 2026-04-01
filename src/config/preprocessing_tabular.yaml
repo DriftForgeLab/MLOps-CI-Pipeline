@@ -1,10 +1,10 @@
 # =============================================================================
-# src/config/preprocessing.yaml — Preprocessing configuration
+# src/config/preprocessing_tabular.yaml — Tabular preprocessing configuration
 # =============================================================================
 # Controls data contract enforcement AND transform policy during preprocessing.
 #
 # Per-dataset schema/constraints live in data/raw/<dataset>/dataset.yaml.
-# This file controls the GLOBAL transform policy applied to all datasets.
+# This file controls the GLOBAL transform policy applied to all tabular datasets.
 #
 # DEFAULT BEHAVIOUR: all transforms disabled → identical to column_selection_only.
 # This guarantees backward compatibility with existing processed versions.

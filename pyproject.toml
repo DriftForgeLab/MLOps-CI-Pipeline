@@ -21,13 +21,16 @@ dependencies = [
     "Pillow>=10.0,<12",
     "torch==2.2.2",
     "torchvision==0.17.2",
+    "rawpy>=0.18,<1.0",
+    "colour-demosaicing>=0.2,<1.0",
+    "scikit-image>=0.22,<1.0",
+    "scipy>=1.12,<2.0",
 ]
 
-[project.scripts] # Here you can define command-line scripts for running the pipeline and API
-#Example:
-run-pipeline = "src.pipeline.run_pipeline:main"
+[project.scripts]
+run-pipeline   = "src.pipeline.run_pipeline:main"
 rollback-model = "src.registry.rollback:main"
-run-api = "src.deployment.app:main"
+run-api        = "src.deployment.app:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

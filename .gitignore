@@ -10,5 +10,12 @@ outputs/
 .pytest_cache/
 .worktrees/
 mlruns/
-outputs/
 .vscode
+
+# Raw image files — large binaries, not tracked in git.
+# dataset.yaml for each dataset IS tracked; only the image files are excluded.
+# See data/raw/README.md for instructions on obtaining the source images.
+data/raw/*/*
+data/raw/drone_raw/
+!data/raw/*/dataset.yaml
+!data/raw/*/README.md

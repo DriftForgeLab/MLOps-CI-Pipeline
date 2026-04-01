@@ -43,6 +43,9 @@ VALID_MISSING_POLICIES: frozenset[str] = {"passthrough", "fail", "impute"}
 VALID_NUMERIC_IMPUTE_STRATEGIES: frozenset[str] = {"mean", "median", "constant"}
 VALID_CATEGORICAL_IMPUTE_STRATEGIES: frozenset[str] = {"most_frequent", "constant"}
 VALID_IMAGE_COLOR_MODES: frozenset[str] = {"rgb", "grayscale"}
+VALID_DEMOSAICING_ALGORITHMS: frozenset[str] = frozenset({"bilinear", "malvar2004", "menon2007"})
+VALID_DENOISING_ALGORITHMS: frozenset[str] = frozenset({"gaussian", "median", "none"})
+VALID_SHARPENING_ALGORITHMS: frozenset[str] = frozenset({"unsharp_mask", "sharpen_filter", "none"})
 
 REQUIRED_PROJECT_KEYS: frozenset[str] = {"name", "version"}
 REQUIRED_DATA_KEYS: frozenset[str] = {"raw", "processed", "evaluation", "drift_scenarios"}
@@ -54,8 +57,16 @@ _PREPROCESSING_TOP_LEVEL_KEYS: set[str] = {
     "encoding", "scaling", "missing_values",
     "image",
 }
-_IMAGE_KEYS: set[str] = {"target_size", "color_mode", "normalize", "flatten", "augmentation"}
+_IMAGE_KEYS: set[str] = {"target_size", "color_mode", "normalize", "flatten", "augmentation", "raw_input", "isp"}
 _IMAGE_AUGMENTATION_KEYS: set[str] = {"enabled", "horizontal_flip", "rotation_degrees", "augmentation_factor"}
+_ISP_KEYS: set[str] = {"black_level_correction", "demosaicing", "white_balance", "color_correction", "denoising", "sharpening", "gamma_correction"}
+_ISP_BLACK_LEVEL_KEYS: set[str] = {"enabled", "black_level"}
+_ISP_DEMOSAICING_KEYS: set[str] = {"algorithm"}
+_ISP_WHITE_BALANCE_KEYS: set[str] = {"r_gain", "g_gain", "b_gain"}
+_ISP_COLOR_CORRECTION_KEYS: set[str] = {"enabled", "matrix"}
+_ISP_DENOISING_KEYS: set[str] = {"algorithm", "strength"}
+_ISP_SHARPENING_KEYS: set[str] = {"algorithm", "radius", "amount"}
+_ISP_GAMMA_KEYS: set[str] = {"gamma"}
 _ENCODING_KEYS: set[str] = {"enabled", "strategy", "handle_unknown", "min_frequency"}
 _SCALING_KEYS: set[str] = {"enabled", "strategy"}
 _MISSING_VALUES_KEYS: set[str] = {"policy", "numeric_strategy", "categorical_strategy", "fill_value"}
@@ -178,6 +189,59 @@ class ImageAugmentationConfig:
     rotation_degrees: int = 0
     augmentation_factor: int = 1  # number of augmented copies per original
 
+# ---------------------------------------------------------------------------
+# ISP pipeline config dataclasses
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ISPBlackLevelConfig:
+    enabled: bool = True
+    # Per-channel [R, G1, G2, B]; None = read from DNG metadata
+    black_level: tuple[float, ...] | None = None
+
+@dataclass(frozen=True)
+class ISPDemosaicingConfig:
+    algorithm: str = "bilinear"  # bilinear | malvar2004 | menon2007
+
+@dataclass(frozen=True)
+class ISPWhiteBalanceConfig:
+    # Per-channel gains (g_gain normalized to 1.0); None = read from DNG metadata
+    r_gain: float | None = None
+    g_gain: float | None = None
+    b_gain: float | None = None
+
+@dataclass(frozen=True)
+class ISPColorCorrectionConfig:
+    enabled: bool = True
+    # 9 floats (3×3, row-major); None = read from DNG metadata
+    matrix: tuple[float, ...] | None = None
+
+@dataclass(frozen=True)
+class ISPDenoisingConfig:
+    algorithm: str = "gaussian"  # gaussian | median | none
+    strength: float = 0.5        # sigma for gaussian; ×10 rounded to odd int for median
+
+@dataclass(frozen=True)
+class ISPSharpeningConfig:
+    algorithm: str = "unsharp_mask"  # unsharp_mask | sharpen_filter | none
+    radius: float = 1.0
+    amount: float = 1.0
+
+@dataclass(frozen=True)
+class ISPGammaConfig:
+    gamma: float = 2.2
+
+@dataclass(frozen=True)
+class ISPConfig:
+    black_level_correction: ISPBlackLevelConfig = field(default_factory=ISPBlackLevelConfig)
+    demosaicing: ISPDemosaicingConfig = field(default_factory=ISPDemosaicingConfig)
+    white_balance: ISPWhiteBalanceConfig = field(default_factory=ISPWhiteBalanceConfig)
+    color_correction: ISPColorCorrectionConfig = field(default_factory=ISPColorCorrectionConfig)
+    denoising: ISPDenoisingConfig = field(default_factory=ISPDenoisingConfig)
+    sharpening: ISPSharpeningConfig = field(default_factory=ISPSharpeningConfig)
+    gamma_correction: ISPGammaConfig = field(default_factory=ISPGammaConfig)
+
+
 @dataclass(frozen=True)
 class ImagePreprocessingConfig:
     target_size: tuple[int, int] = (64, 64)  # (height, width)
@@ -185,6 +249,8 @@ class ImagePreprocessingConfig:
     normalize: bool = True                     # scale pixels to [0,1]
     flatten: bool = True                       # flatten to 1D for sklearn
     augmentation: ImageAugmentationConfig = field(default_factory=ImageAugmentationConfig)
+    raw_input: bool = False                    # if True, load DNG files and run ISP pipeline
+    isp: ISPConfig | None = None               # required when raw_input=True
 
 @dataclass(frozen=True)
 class PreprocessingConfig:

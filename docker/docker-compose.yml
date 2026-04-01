@@ -20,7 +20,7 @@ services:
     volumes:
       # Read-only mount of the MLflow tracking store for model loading.
       - ../mlruns:/app/mlruns:ro
-      # Read-only mount of config files so deployment.yaml and pipeline.yaml
+      # Read-only mount of config files so deployment.yaml and pipeline configs
       # can be read at runtime without baking them into the image.
       - ../src/config:/app/src/config:ro
       # Read-only mount of model artifacts for joblib-based model loading.
