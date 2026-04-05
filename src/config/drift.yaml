@@ -1,0 +1,66 @@
+# =============================================================================
+# Drift detection configuration
+# =============================================================================
+# Shared by the offline pipeline drift stage and online monitoring.
+# All thresholds and severity levels are fully configurable.
+
+drift:
+  # Master switch — set to false to disable drift analysis entirely
+  enabled: true
+
+  # Which preprocessed split to use as reference baseline
+  # Currently only "train" is supported
+  reference_source: "train"
+
+  # Statistical tests used by Evidently for drift detection
+  stattest:
+    numerical: "ks"              # Kolmogorov-Smirnov test for numerical features
+    categorical: "chisquare"     # Chi-square test for categorical features
+
+  # P-value thresholds below which drift is flagged per feature
+  stattest_threshold:
+    numerical: 0.05
+    categorical: 0.05
+
+  # Fraction of features that must drift for dataset_drift_detected=true
+  drift_share: 0.5
+
+  # Overall severity classification based on drift_share
+  # drift_share <= low_max        → "low"
+  # low_max < drift_share <= medium_max → "medium"
+  # drift_share > medium_max      → "high"
+  severity:
+    low_max: 0.25
+    medium_max: 0.50
+
+  # Per-feature severity classification based on p-value
+  # p-value < high_below          → "high"
+  # high_below <= p-value < medium_below → "medium"
+  # p-value >= medium_below (but < stattest_threshold) → "low"
+  feature_severity:
+    high_below: 0.001
+    medium_below: 0.01
+
+  # Deterministic recommendation rules
+  # Both conditions (severity AND drift_share) must be met
+  recommendations:
+    retrain_min_severity: "high"           # Minimum overall severity for "retrain"
+    retrain_min_drift_share: 0.50          # Minimum drift share for "retrain"
+    collect_data_min_severity: "medium"    # Minimum overall severity for "collect_data"
+    collect_data_min_drift_share: 0.25     # Minimum drift share for "collect_data"
+    # Below both thresholds → "monitor"
+
+  # Pipeline integration settings
+  pipeline:
+    # Block promotion when overall severity >= this level
+    block_on_severity: "high"
+    # Show interactive drift gate when any drift is detected
+    require_approval_on_drift: true
+
+  # Online monitoring settings
+  monitoring:
+    enabled: true
+    # Minimum rows in a batch to compute drift (below this, skip)
+    min_batch_size: 30
+    # Notify user when severity reaches this level or higher
+    alert_severity: "medium"

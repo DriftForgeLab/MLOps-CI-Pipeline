@@ -20,6 +20,7 @@ from src.config.preprocessing_loader import load_preprocessing_config  # noqa: F
 from src.config.evaluation_loader import load_evaluation_config  # noqa: F401
 from src.config.promotion_loader import load_promotion_config  # noqa: F401
 from src.config.deployment_loader import load_deployment_config  # noqa: F401
+from src.config.drift_loader import load_drift_config  # noqa: F401
 
 # Re-export dataclasses so `from src.config.loader import PipelineConfig` works.
 from src.config.schema import (  # noqa: F401
@@ -60,4 +61,12 @@ from src.config.schema import (  # noqa: F401
     ModelServingConfig,
     HealthcheckConfig,
     DeploymentConfig,
+    DriftStatTestConfig,
+    DriftStatTestThresholdConfig,
+    DriftSeverityConfig,
+    DriftFeatureSeverityConfig,
+    DriftRecommendationConfig,
+    DriftPipelineConfig,
+    DriftMonitoringConfig,
+    DriftConfig,
 )

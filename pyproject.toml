@@ -16,7 +16,7 @@ dependencies = [
     "mlflow==2.11.3",
     "fastapi==0.110.0",
     "uvicorn==0.29.0",
-    "evidently==0.4.21",
+    "evidently==0.6.7",
     "pyyaml==6.0.1",
     "Pillow>=10.0,<12",
     "torch==2.2.2",

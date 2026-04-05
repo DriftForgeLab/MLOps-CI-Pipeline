@@ -125,6 +125,7 @@ def _build_config(raw: dict) -> PipelineConfig:
             evaluation=raw["configs"]["evaluation"],
             promotion=raw["configs"]["promotion"],
             deployment=raw["configs"]["deployment"],
+            **( {"drift": raw["configs"]["drift"]} if "drift" in raw.get("configs", {}) else {} ),
         ),
         log_level=raw["log_level"],
         dataset=raw["dataset"],

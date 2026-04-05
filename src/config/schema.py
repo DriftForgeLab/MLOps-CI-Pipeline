@@ -17,7 +17,7 @@ IMAGE_TASK_TYPES: frozenset[str] = frozenset({"image_classification", "image_cla
 CLASSIFICATION_TASK_TYPES: frozenset[str] = frozenset({"classification"}) | IMAGE_TASK_TYPES
 SKLEARN_TASK_TYPES: frozenset[str] = frozenset({"classification", "regression", "image_classification"})
 VALID_LOG_LEVELS: frozenset[str] = {"DEBUG", "INFO", "WARNING", "ERROR"}
-VALID_PIPELINE_STAGES: frozenset[str] = {"preprocessing", "training", "evaluation", "deployment", "promotion"} #!!! May need to update the validation of Deploymeny in later sprints
+VALID_PIPELINE_STAGES: frozenset[str] = {"preprocessing", "training", "evaluation", "drift", "deployment", "promotion"} #!!! May need to update the validation of Deploymeny in later sprints
 VALID_ALGORITHMS: frozenset[str] = {"random_forest", "logistic_regression", "linear_regression", "cnn"}
 VALID_SOLVERS: frozenset[str] = {"lbfgs", "saga", "liblinear"}
 VALID_CLASS_WEIGHTS: frozenset[str] = {"balanced"} ## May need other weights later
@@ -79,6 +79,17 @@ VALID_OPERATORS = {">=", "<=", ">", "<", "=="}
 _REQUIRED_RULE_KEYS: frozenset[str] = frozenset({"id", "metric", "threshold", "operator"})
 
 # ---------------------------------------------------------------------------
+# Drift constants
+# ---------------------------------------------------------------------------
+
+VALID_DRIFT_SEVERITIES: frozenset[str] = frozenset({"low", "medium", "high"})
+VALID_DRIFT_STATTESTS: frozenset[str] = frozenset({
+    "ks", "chisquare", "psi", "wasserstein", "jensenshannon"
+})
+VALID_DRIFT_ACTIONS: frozenset[str] = frozenset({"retrain", "collect_data", "monitor"})
+VALID_REFERENCE_SOURCES: frozenset[str] = frozenset({"train"})
+
+# ---------------------------------------------------------------------------
 # Deployment constants
 # ---------------------------------------------------------------------------
 
@@ -113,6 +124,7 @@ class SubConfigPaths:
     evaluation: str
     promotion: str
     deployment: str
+    drift: str = "src/config/drift.yaml"
 
 @dataclass(frozen=True)
 class RandomForestHyperparams: ### Remember to change this DataCalss if Training_Classification.yaml is updated in later sprints
@@ -352,3 +364,64 @@ class DeploymentConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     model: ModelServingConfig = field(default_factory=ModelServingConfig)
     healthcheck: HealthcheckConfig = field(default_factory=HealthcheckConfig)
+
+# ---------------------------------------------------------------------------
+# Drift config dataclasses
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class DriftStatTestConfig:
+    numerical: str = "ks"
+    categorical: str = "chisquare"
+
+@dataclass(frozen=True)
+class DriftStatTestThresholdConfig:
+    numerical: float = 0.05
+    categorical: float = 0.05
+
+@dataclass(frozen=True)
+class DriftSeverityConfig:
+    low_max: float = 0.25
+    medium_max: float = 0.50
+
+@dataclass(frozen=True)
+class DriftFeatureSeverityConfig:
+    high_below: float = 0.001
+    medium_below: float = 0.01
+
+@dataclass(frozen=True)
+class DriftRecommendationConfig:
+    retrain_min_severity: str = "high"
+    retrain_min_drift_share: float = 0.50
+    collect_data_min_severity: str = "medium"
+    collect_data_min_drift_share: float = 0.25
+
+@dataclass(frozen=True)
+class DriftPipelineConfig:
+    block_on_severity: str = "high"
+    require_approval_on_drift: bool = True
+
+@dataclass(frozen=True)
+class DriftMonitoringConfig:
+    enabled: bool = True
+    min_batch_size: int = 30
+    alert_severity: str = "medium"
+
+@dataclass(frozen=True)
+class DriftConfig:
+    enabled: bool = True
+    reference_source: str = "train"
+    stattest: DriftStatTestConfig = field(default_factory=DriftStatTestConfig)
+    stattest_threshold: DriftStatTestThresholdConfig = field(
+        default_factory=DriftStatTestThresholdConfig
+    )
+    drift_share: float = 0.5
+    severity: DriftSeverityConfig = field(default_factory=DriftSeverityConfig)
+    feature_severity: DriftFeatureSeverityConfig = field(
+        default_factory=DriftFeatureSeverityConfig
+    )
+    recommendations: DriftRecommendationConfig = field(
+        default_factory=DriftRecommendationConfig
+    )
+    pipeline: DriftPipelineConfig = field(default_factory=DriftPipelineConfig)
+    monitoring: DriftMonitoringConfig = field(default_factory=DriftMonitoringConfig)
