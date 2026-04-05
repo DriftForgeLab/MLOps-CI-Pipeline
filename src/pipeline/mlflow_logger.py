@@ -185,6 +185,43 @@ def log_promotion_decision_to_mlflow(decision: dict) -> None:
         mlflow.set_tag("promotion.reason", decision["reason"])
 
 
+def log_drift_metrics_to_mlflow(drift_result: dict) -> None:
+    """Log per-feature drift scores and overall drift tags to the active MLflow run.
+
+    This function logs:
+      - Per-feature metric ``drift.{feature}.score`` (one per feature in ``drift_result["features"]``)
+      - Tags: ``drift.overall_severity``, ``drift.recommendation``,
+        ``drift.dataset_drift_detected``, ``drift.drifted_feature_count``,
+        ``drift.drift_share``
+
+    Args:
+        drift_result: Standard drift result dict as returned by
+                      ``src.drift.interpret.build_drift_result``.
+    """
+    if not mlflow.active_run():
+        _logger.warning("No active MLflow run — skipping drift metric logging.")
+        return
+
+    features = drift_result.get("features") or {}
+    per_feature_metrics = {
+        f"drift.{name}.score": float(data["drift_score"])
+        for name, data in features.items()
+        if isinstance(data.get("drift_score"), (int, float))
+    }
+    if per_feature_metrics:
+        mlflow.log_metrics(per_feature_metrics)
+
+    overall = drift_result.get("overall") or {}
+    recommendation = drift_result.get("recommendation") or {}
+    mlflow.set_tags({
+        "drift.overall_severity": str(overall.get("severity", "")),
+        "drift.recommendation": str(recommendation.get("action", "")),
+        "drift.dataset_drift_detected": "true" if overall.get("dataset_drift_detected") else "false",
+        "drift.drifted_feature_count": str(overall.get("drifted_feature_count", 0)),
+        "drift.drift_share": str(overall.get("drift_share", 0.0)),
+    })
+
+
 def log_drift_artifacts(drift_dir: Path) -> None:
     """Log drift report HTML/JSON to the active MLflow run if they exist.
 
