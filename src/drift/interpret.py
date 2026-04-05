@@ -163,7 +163,7 @@ def build_drift_result(
 
     Performs per-feature and overall severity classification, derives the
     recommendation, and stamps metadata. The returned dict conforms to the
-    standard schema (see ``docs/tabular-drift-implementation-plan.md`` §4).
+    standard schema.
 
     Args:
         overall_raw:           Output of ``extract_overall_results``.
