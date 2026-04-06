@@ -113,6 +113,7 @@ def _evaluation_stage(config: PipelineConfig, version_id: str) -> None:
     
 
 def _drift_stage(config: PipelineConfig, version_id: str) -> None:
+    """Run drift analysis and persist reports, metrics, and result JSON."""
     drift_config = load_drift_config(Path(config.configs.drift))
     if not drift_config.enabled:
         logger.info("  Drift analysis disabled — skipping.")

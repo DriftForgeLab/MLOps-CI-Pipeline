@@ -85,9 +85,9 @@ def build_drift_result(
 ) -> dict:
     """Assemble the complete standard drift result JSON.
 
-    Performs per-feature and overall severity classification, derives the
-    recommendation, and stamps metadata. The returned dict conforms to the
-    standard schema.
+    Performs per-feature and overall severity classification and stamps
+    metadata. The returned dict conforms to the standard drift result
+    schema (v1.0.0).
 
     Args:
         overall_raw:           Output of ``extract_overall_results``.
