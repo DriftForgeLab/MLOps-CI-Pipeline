@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.config.loader import PipelineConfig, load_promotion_config
+from src.config.loader import PipelineConfig, load_promotion_config, load_drift_config
 from src.data.preprocess import run_preprocessing, PREPROCESSED_SUBDIR
 
 from src.training.classification.train import run_training as run_classification_training
@@ -39,6 +39,9 @@ from src.pipeline.mlflow_logger import (
 from src.promotion.rules import run_promotion_rules
 from src.promotion.approval import request_approval
 from src.registry.model_registry import PROMOTION_ARTIFACT_SUBDIR
+from src.evaluation.drift_tests import run_drift_analysis
+from src.monitoring.reports import save_drift_report_json, save_drift_report_html
+from src.pipeline.mlflow_logger import log_drift_metrics_to_mlflow
 import json
 import mlflow
 
@@ -109,6 +112,39 @@ def _evaluation_stage(config: PipelineConfig, version_id: str) -> None:
     log_comparison_to_mlflow(report, output_dir=Path(config.output_dir))
     
 
+def _drift_stage(config: PipelineConfig, version_id: str) -> None:
+    drift_config = load_drift_config(Path(config.configs.drift))
+    if not drift_config.enabled:
+        logger.info("  Drift analysis disabled — skipping.")
+        return
+
+    drift_result, evidently_report = run_drift_analysis(
+        config, version_id, drift_config
+    )
+
+    # Save reports to drift_scenarios dir (picked up by existing log_drift_artifacts)
+    drift_dir = Path(config.data.drift_scenarios)
+    save_drift_report_json(drift_result, drift_dir)
+    save_drift_report_html(evidently_report, drift_dir)
+
+    # Log drift metrics and tags to MLflow
+    log_drift_metrics_to_mlflow(drift_result)
+
+    # Write drift result for promotion stage to consume
+    drift_path = Path(config.output_dir) / "drift_result.json"
+    atomic_write_json(drift_path, drift_result)
+    logger.info("  Drift result written to: %s", drift_path.resolve())
+
+
+# Ordinal ranking for comparing severity labels.
+_SEVERITY_ORD: dict[str, int] = {"low": 0, "medium": 1, "high": 2}
+
+
+def _severity_ge(severity: str, threshold: str) -> bool:
+    """Return True if *severity* is at or above *threshold*."""
+    return _SEVERITY_ORD.get(severity, 0) >= _SEVERITY_ORD.get(threshold, 0)
+
+
 def _promotion_stage(config: PipelineConfig, version_id: str) -> None:
     # Load evaluation report
     report_path = Path(config.output_dir) / "evaluation_report.json"
@@ -123,6 +159,27 @@ def _promotion_stage(config: PipelineConfig, version_id: str) -> None:
     # Run threshold rules
     promotion_config = load_promotion_config(Path(config.configs.promotion))
     violations = run_promotion_rules(report["metrics"], config.task_type, promotion_config)
+
+    # Consume drift result if the drift stage produced one
+    drift_path = Path(config.output_dir) / "drift_result.json"
+    drift = None
+    if drift_path.exists():
+        with open(drift_path) as df:
+            drift = json.load(df)
+
+        severity = drift["overall"]["severity"]
+        if _severity_ge(severity, promotion_config.drift_block_severity):
+            violations.append({
+                "rule_id":     "DRIFT_SEVERITY",
+                "metric":      "drift.overall.severity",
+                "observed":    severity,
+                "operator":    "<",
+                "threshold":   promotion_config.drift_block_severity,
+                "description": (
+                    f"Drift severity '{severity}' exceeds blocking threshold "
+                    f"'{promotion_config.drift_block_severity}'"
+                ),
+            })
 
     if violations:
         violation_lines = "\n  ".join(
@@ -145,7 +202,7 @@ def _promotion_stage(config: PipelineConfig, version_id: str) -> None:
 
     logger.info("  All promotion rules passed — candidate is eligible for promotion.")
 
-    result = request_approval(report)
+    result = request_approval(report, drift=drift)
 
     mlflow_run_id = mlflow.active_run().info.run_id if mlflow.active_run() else None
     decision = {
@@ -188,6 +245,7 @@ _STAGE_REGISTRY: dict[str, Callable] = {
     "preprocessing": _preprocessing_stage,
     "training":      _training_stage,
     "evaluation":    _evaluation_stage,
+    "drift":         _drift_stage,
     "promotion":     _promotion_stage,
     "deployment":    _placeholder_stage,
 }
