@@ -11,7 +11,6 @@ from src.pipeline.mlflow_logger import log_drift_artifacts, log_drift_metrics_to
 def _drift_result(
     *,
     overall_severity: str = "high",
-    recommendation_action: str = "retrain",
     dataset_drift_detected: bool = True,
     drift_share: float = 0.75,
     drifted_count: int = 3,
@@ -54,12 +53,6 @@ def _drift_result(
             "severity": overall_severity,
         },
         "features": features,
-        "recommendation": {
-            "action": recommendation_action,
-            "reason": "test",
-            "details": {"drifted_features": [], "severity_counts": {}},
-        },
-        "user_decision": None,
         "artifacts": {},
         "config_snapshot": {},
     }
@@ -127,7 +120,6 @@ def test_log_drift_metrics_sets_overall_tags(tmp_path):
         log_drift_metrics_to_mlflow(_drift_result())
     tags = mlflow.get_run(run.info.run_id).data.tags
     assert tags["drift.overall_severity"] == "high"
-    assert tags["drift.recommendation"] == "retrain"
     assert tags["drift.dataset_drift_detected"] == "true"
     assert tags["drift.drifted_feature_count"] == "3"
     assert tags["drift.drift_share"] == "0.75"
@@ -139,7 +131,6 @@ def test_log_drift_metrics_false_when_no_drift(tmp_path):
     result = _drift_result(
         dataset_drift_detected=False,
         overall_severity="low",
-        recommendation_action="monitor",
         drift_share=0.0,
         drifted_count=0,
     )
@@ -148,7 +139,6 @@ def test_log_drift_metrics_false_when_no_drift(tmp_path):
     tags = mlflow.get_run(run.info.run_id).data.tags
     assert tags["drift.dataset_drift_detected"] == "false"
     assert tags["drift.overall_severity"] == "low"
-    assert tags["drift.recommendation"] == "monitor"
 
 
 def test_log_drift_metrics_noop_when_no_active_run(tmp_path):

@@ -10,8 +10,6 @@ from src.config.schema import (
     DriftStatTestThresholdConfig,
     DriftSeverityConfig,
     DriftFeatureSeverityConfig,
-    DriftRecommendationConfig,
-    DriftPipelineConfig,
     DriftMonitoringConfig,
     DriftConfig,
 )
@@ -41,24 +39,11 @@ def load_drift_config(path: Path) -> DriftConfig:
     if ref_source not in VALID_REFERENCE_SOURCES:
         errors.append(f"Invalid reference_source: '{ref_source}'")
 
-    # Validate severity references in pipeline config
-    pipeline_cfg = drift.get("pipeline", {})
-    block_sev = pipeline_cfg.get("block_on_severity", "high")
-    if block_sev not in VALID_DRIFT_SEVERITIES:
-        errors.append(f"Invalid pipeline.block_on_severity: '{block_sev}'")
-
     # Validate severity references in monitoring config
     monitoring_cfg = drift.get("monitoring", {})
     alert_sev = monitoring_cfg.get("alert_severity", "medium")
     if alert_sev not in VALID_DRIFT_SEVERITIES:
         errors.append(f"Invalid monitoring.alert_severity: '{alert_sev}'")
-
-    # Validate severity references in recommendation config
-    rec_cfg = drift.get("recommendations", {})
-    for key in ("retrain_min_severity", "collect_data_min_severity"):
-        val = rec_cfg.get(key, {"retrain_min_severity": "high", "collect_data_min_severity": "medium"}[key])
-        if val not in VALID_DRIFT_SEVERITIES:
-            errors.append(f"Invalid recommendations.{key}: '{val}'")
 
     if errors:
         raise ValueError(
@@ -78,9 +63,5 @@ def load_drift_config(path: Path) -> DriftConfig:
         feature_severity=DriftFeatureSeverityConfig(
             **drift.get("feature_severity", {})
         ),
-        recommendations=DriftRecommendationConfig(
-            **drift.get("recommendations", {})
-        ),
-        pipeline=DriftPipelineConfig(**drift.get("pipeline", {})),
         monitoring=DriftMonitoringConfig(**drift.get("monitoring", {})),
     )

@@ -1,11 +1,10 @@
-"""Tests for src.drift.interpret — pure-function severity and recommendation logic."""
+"""Tests for src.drift.interpret — pure-function severity classification logic."""
 
 import pytest
 
 from src.config.schema import (
     DriftConfig,
     DriftFeatureSeverityConfig,
-    DriftRecommendationConfig,
     DriftSeverityConfig,
 )
 from src.drift.interpret import (
@@ -14,7 +13,6 @@ from src.drift.interpret import (
     build_drift_result,
     classify_feature_severity,
     classify_overall_severity,
-    compute_recommendation,
 )
 
 
@@ -157,136 +155,6 @@ class TestClassifyOverallSeverity:
 
 
 # ===========================================================================
-# compute_recommendation
-# ===========================================================================
-
-
-class TestComputeRecommendation:
-    def _default_rec_config(self) -> DriftRecommendationConfig:
-        return DriftRecommendationConfig(
-            retrain_min_severity="high",
-            retrain_min_drift_share=0.50,
-            collect_data_min_severity="medium",
-            collect_data_min_drift_share=0.25,
-        )
-
-    def test_retrain_on_high_severity_and_high_share(self):
-        rec = compute_recommendation(
-            overall_severity="high",
-            drift_share=0.75,
-            rec_config=self._default_rec_config(),
-            drifted_features=["a", "b", "c"],
-            severity_counts={"low": 1, "medium": 0, "high": 2},
-        )
-        assert rec["action"] == "retrain"
-        assert "retrain" in rec["reason"].lower()
-
-    def test_collect_data_when_medium_severity(self):
-        rec = compute_recommendation(
-            overall_severity="medium",
-            drift_share=0.40,
-            rec_config=self._default_rec_config(),
-            drifted_features=["a"],
-            severity_counts={"low": 3, "medium": 1, "high": 0},
-        )
-        assert rec["action"] == "collect_data"
-
-    def test_monitor_when_low(self):
-        rec = compute_recommendation(
-            overall_severity="low",
-            drift_share=0.10,
-            rec_config=self._default_rec_config(),
-            drifted_features=[],
-            severity_counts={"low": 4, "medium": 0, "high": 0},
-        )
-        assert rec["action"] == "monitor"
-
-    def test_high_severity_but_low_share_falls_through_to_collect_data(self):
-        """High severity but drift_share below retrain_min → collect_data."""
-        rec = compute_recommendation(
-            overall_severity="high",
-            drift_share=0.30,
-            rec_config=self._default_rec_config(),
-            drifted_features=["a"],
-            severity_counts={"low": 3, "medium": 0, "high": 1},
-        )
-        assert rec["action"] == "collect_data"
-
-    def test_high_severity_below_all_thresholds_is_monitor(self):
-        """High severity but share below collect_data_min → monitor."""
-        rec = compute_recommendation(
-            overall_severity="high",
-            drift_share=0.20,
-            rec_config=self._default_rec_config(),
-            drifted_features=["a"],
-            severity_counts={"low": 4, "medium": 0, "high": 1},
-        )
-        assert rec["action"] == "monitor"
-
-    def test_boundary_retrain_share_exact(self):
-        """drift_share exactly at retrain_min_drift_share → retrain (>=)."""
-        rec = compute_recommendation(
-            overall_severity="high",
-            drift_share=0.50,
-            rec_config=self._default_rec_config(),
-            drifted_features=["a", "b"],
-            severity_counts={"low": 2, "medium": 0, "high": 2},
-        )
-        assert rec["action"] == "retrain"
-
-    def test_boundary_collect_data_share_exact(self):
-        """drift_share exactly at collect_data_min_drift_share → collect_data."""
-        rec = compute_recommendation(
-            overall_severity="medium",
-            drift_share=0.25,
-            rec_config=self._default_rec_config(),
-            drifted_features=["a"],
-            severity_counts={"low": 3, "medium": 1, "high": 0},
-        )
-        assert rec["action"] == "collect_data"
-
-    def test_returns_action_reason_and_details(self):
-        rec = compute_recommendation(
-            overall_severity="high",
-            drift_share=0.75,
-            rec_config=self._default_rec_config(),
-            drifted_features=["a", "b", "c"],
-            severity_counts={"low": 1, "medium": 0, "high": 2},
-        )
-        assert set(rec.keys()) == {"action", "reason", "details"}
-        assert rec["details"]["drifted_features"] == ["a", "b", "c"]
-        assert rec["details"]["severity_counts"] == {"low": 1, "medium": 0, "high": 2}
-
-    def test_determinism(self):
-        """Same inputs produce byte-identical outputs."""
-        cfg = self._default_rec_config()
-        kwargs = dict(
-            overall_severity="high",
-            drift_share=0.75,
-            rec_config=cfg,
-            drifted_features=["a", "b"],
-            severity_counts={"low": 0, "medium": 0, "high": 2},
-        )
-        assert compute_recommendation(**kwargs) == compute_recommendation(**kwargs)
-
-    def test_details_are_copies_not_references(self):
-        """Mutating caller's inputs must not affect the returned details."""
-        drifted = ["a", "b"]
-        counts = {"low": 0, "medium": 0, "high": 2}
-        rec = compute_recommendation(
-            overall_severity="high",
-            drift_share=0.75,
-            rec_config=self._default_rec_config(),
-            drifted_features=drifted,
-            severity_counts=counts,
-        )
-        drifted.append("c")
-        counts["high"] = 99
-        assert rec["details"]["drifted_features"] == ["a", "b"]
-        assert rec["details"]["severity_counts"] == {"low": 0, "medium": 0, "high": 2}
-
-
-# ===========================================================================
 # build_drift_result
 # ===========================================================================
 
@@ -321,8 +189,7 @@ class TestBuildDriftResult:
             "schema_version", "drift_type", "generated_at",
             "pipeline_execution_id", "dataset_version_id", "task_type",
             "reference_dataset", "current_dataset",
-            "overall", "features", "recommendation",
-            "user_decision", "artifacts", "config_snapshot",
+            "overall", "features", "artifacts", "config_snapshot",
         }
         assert set(result.keys()) == expected
 
@@ -337,16 +204,6 @@ class TestBuildDriftResult:
         result = self._call(overall_raw, features_raw)
         assert result["schema_version"] == SCHEMA_VERSION
         assert result["drift_type"] == DRIFT_TYPE_TABULAR
-
-    def test_user_decision_is_null(self):
-        result = self._call(
-            overall_raw=_overall_raw(
-                drift_share=0.0, drifted_feature_count=0,
-                total_feature_count=1, dataset_drift_detected=False,
-            ),
-            features_raw={"f1": _feature(drift_detected=False, drift_score=0.8)},
-        )
-        assert result["user_decision"] is None
 
     def test_artifacts_empty_dict(self):
         result = self._call(
@@ -437,8 +294,8 @@ class TestBuildDriftResult:
         assert result["overall"]["drifted_feature_count"] == 4
         assert result["overall"]["dataset_drift_detected"] is True
 
-    def test_all_drifted_triggers_retrain(self):
-        """All features drifted with high scores → severity=high, rec=retrain."""
+    def test_all_drifted_is_high_severity(self):
+        """All features drifted with high scores → severity=high."""
         features_raw = {
             f"f{i}": _feature(drift_detected=True, drift_score=0.0001)
             for i in range(4)
@@ -451,9 +308,8 @@ class TestBuildDriftResult:
         )
         result = self._call(overall_raw, features_raw)
         assert result["overall"]["severity"] == "high"
-        assert result["recommendation"]["action"] == "retrain"
 
-    def test_no_drift_triggers_monitor(self):
+    def test_no_drift_is_low_severity(self):
         features_raw = {
             f"f{i}": _feature(drift_detected=False, drift_score=0.8)
             for i in range(4)
@@ -466,34 +322,26 @@ class TestBuildDriftResult:
         )
         result = self._call(overall_raw, features_raw)
         assert result["overall"]["severity"] == "low"
-        assert result["recommendation"]["action"] == "monitor"
 
-    def test_recommendation_details_populated(self):
+    def test_no_recommendation_or_user_decision_fields(self):
+        """Schema must not contain recommendation or user_decision fields."""
         features_raw = {
             "a": _feature(drift_detected=True, drift_score=0.0001),
-            "b": _feature(drift_detected=True, drift_score=0.005),
-            "c": _feature(drift_detected=False, drift_score=0.5),
+            "b": _feature(drift_detected=False, drift_score=0.5),
         }
         overall_raw = _overall_raw(
-            drift_share=2 / 3,
-            drifted_feature_count=2,
-            total_feature_count=3,
+            drift_share=0.5,
+            drifted_feature_count=1,
+            total_feature_count=2,
             dataset_drift_detected=True,
         )
         result = self._call(overall_raw, features_raw)
-
-        details = result["recommendation"]["details"]
-        assert set(details["drifted_features"]) == {"a", "b"}
-        assert details["severity_counts"]["high"] == 1
-        assert details["severity_counts"]["medium"] == 1
-        assert details["severity_counts"]["low"] == 1
+        assert "recommendation" not in result
+        assert "user_decision" not in result
 
     def test_config_snapshot_contents(self):
         config = DriftConfig(
             severity=DriftSeverityConfig(low_max=0.3, medium_max=0.6),
-            feature_severity=DriftFeatureSeverityConfig(
-                high_below=0.002, medium_below=0.02,
-            ),
         )
         features_raw = {"f1": _feature(drift_detected=False, drift_score=0.8)}
         overall_raw = _overall_raw(
@@ -507,11 +355,11 @@ class TestBuildDriftResult:
         snap = result["config_snapshot"]
         assert snap["severity_low_max"] == 0.3
         assert snap["severity_medium_max"] == 0.6
-        assert snap["feature_severity_high_below"] == 0.002
-        assert snap["feature_severity_medium_below"] == 0.02
         assert snap["stattest_numerical"] == "ks"
         assert snap["stattest_categorical"] == "chisquare"
-        assert snap["block_on_severity"] == "high"
+        assert snap["drift_share_threshold"] == 0.5
+        # blocking threshold is NOT in config_snapshot — it lives on PromotionConfig
+        assert "block_on_severity" not in snap
 
     def test_metadata_passthrough(self):
         features_raw = {"f1": _feature(drift_detected=False, drift_score=0.8)}
@@ -543,7 +391,6 @@ class TestBuildDriftResult:
         result = self._call(overall_raw, features_raw, task_type="regression")
         assert result["task_type"] == "regression"
         assert result["overall"]["severity"] == "high"
-        assert result["recommendation"]["action"] == "retrain"
 
     def test_single_feature_fully_drifted(self):
         """Single-feature dataset, drift_share=1.0 works correctly."""
@@ -556,7 +403,6 @@ class TestBuildDriftResult:
         )
         result = self._call(overall_raw, features_raw)
         assert result["overall"]["severity"] == "high"
-        assert result["recommendation"]["action"] == "retrain"
 
     def test_determinism_of_non_timestamp_fields(self):
         """Apart from generated_at, two calls with identical inputs produce identical output."""

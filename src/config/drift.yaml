@@ -41,22 +41,6 @@ drift:
     high_below: 0.001
     medium_below: 0.01
 
-  # Deterministic recommendation rules
-  # Both conditions (severity AND drift_share) must be met
-  recommendations:
-    retrain_min_severity: "high"           # Minimum overall severity for "retrain"
-    retrain_min_drift_share: 0.50          # Minimum drift share for "retrain"
-    collect_data_min_severity: "medium"    # Minimum overall severity for "collect_data"
-    collect_data_min_drift_share: 0.25     # Minimum drift share for "collect_data"
-    # Below both thresholds → "monitor"
-
-  # Pipeline integration settings
-  pipeline:
-    # Block promotion when overall severity >= this level
-    block_on_severity: "high"
-    # Show interactive drift gate when any drift is detected
-    require_approval_on_drift: true
-
   # Online monitoring settings
   monitoring:
     enabled: true

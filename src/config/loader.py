@@ -65,8 +65,6 @@ from src.config.schema import (  # noqa: F401
     DriftStatTestThresholdConfig,
     DriftSeverityConfig,
     DriftFeatureSeverityConfig,
-    DriftRecommendationConfig,
-    DriftPipelineConfig,
     DriftMonitoringConfig,
     DriftConfig,
 )

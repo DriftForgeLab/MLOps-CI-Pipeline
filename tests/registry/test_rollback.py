@@ -52,6 +52,7 @@ def _write_config(tmp_path: Path, task_type: str = "classification", registry_mo
         "  evaluation: src/config/evaluation.yaml\n"
         "  deployment: src/config/deployment.yaml\n"
         "  promotion: src/config/promotion.yaml\n"
+        "  drift: src/config/drift.yaml\n"
         "log_level: INFO\n"
         "mlflow:\n"
         f"{mlflow_block}"

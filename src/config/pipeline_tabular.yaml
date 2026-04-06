@@ -10,6 +10,7 @@ pipeline_stages:
   - "preprocessing"
   - "training"
   - "evaluation"
+  - "drift"
   - "promotion"
 
 output_dir: "outputs"
@@ -28,6 +29,7 @@ configs:
   evaluation: "src/config/evaluation.yaml"
   deployment: "src/config/deployment.yaml"
   promotion: "src/config/promotion.yaml"
+  drift: "src/config/drift.yaml"
 
 log_level: "INFO"
 

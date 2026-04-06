@@ -49,7 +49,7 @@ VALID_SHARPENING_ALGORITHMS: frozenset[str] = frozenset({"unsharp_mask", "sharpe
 
 REQUIRED_PROJECT_KEYS: frozenset[str] = {"name", "version"}
 REQUIRED_DATA_KEYS: frozenset[str] = {"raw", "processed", "evaluation", "drift_scenarios"}
-REQUIRED_CONFIGS_KEYS: frozenset[str] = {"preprocessing", "training", "evaluation", "deployment", "promotion"}
+REQUIRED_CONFIGS_KEYS: frozenset[str] = {"preprocessing", "training", "evaluation", "deployment", "promotion", "drift"}
 
 _PREPROCESSING_TOP_LEVEL_KEYS: set[str] = {
     "fail_on_nulls", "min_rows", "validate_types", "validate_labels", "validate_on_skip",
@@ -86,7 +86,6 @@ VALID_DRIFT_SEVERITIES: frozenset[str] = frozenset({"low", "medium", "high"})
 VALID_DRIFT_STATTESTS: frozenset[str] = frozenset({
     "ks", "chisquare", "psi", "wasserstein", "jensenshannon"
 })
-VALID_DRIFT_ACTIONS: frozenset[str] = frozenset({"retrain", "collect_data", "monitor"})
 VALID_REFERENCE_SOURCES: frozenset[str] = frozenset({"train"})
 
 # ---------------------------------------------------------------------------
@@ -124,7 +123,7 @@ class SubConfigPaths:
     evaluation: str
     promotion: str
     deployment: str
-    drift: str = "src/config/drift.yaml"
+    drift: str
 
 @dataclass(frozen=True)
 class RandomForestHyperparams: ### Remember to change this DataCalss if Training_Classification.yaml is updated in later sprints
@@ -338,6 +337,7 @@ class PromotionTaskConfig:
 class PromotionConfig:
     classification: PromotionTaskConfig
     regression: PromotionTaskConfig
+    drift_block_severity: str = "high"
 
 # ---------------------------------------------------------------------------
 # Deployment config dataclasses
@@ -390,18 +390,6 @@ class DriftFeatureSeverityConfig:
     medium_below: float = 0.01
 
 @dataclass(frozen=True)
-class DriftRecommendationConfig:
-    retrain_min_severity: str = "high"
-    retrain_min_drift_share: float = 0.50
-    collect_data_min_severity: str = "medium"
-    collect_data_min_drift_share: float = 0.25
-
-@dataclass(frozen=True)
-class DriftPipelineConfig:
-    block_on_severity: str = "high"
-    require_approval_on_drift: bool = True
-
-@dataclass(frozen=True)
 class DriftMonitoringConfig:
     enabled: bool = True
     min_batch_size: int = 30
@@ -420,8 +408,4 @@ class DriftConfig:
     feature_severity: DriftFeatureSeverityConfig = field(
         default_factory=DriftFeatureSeverityConfig
     )
-    recommendations: DriftRecommendationConfig = field(
-        default_factory=DriftRecommendationConfig
-    )
-    pipeline: DriftPipelineConfig = field(default_factory=DriftPipelineConfig)
     monitoring: DriftMonitoringConfig = field(default_factory=DriftMonitoringConfig)

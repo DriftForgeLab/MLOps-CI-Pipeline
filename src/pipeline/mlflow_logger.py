@@ -190,9 +190,8 @@ def log_drift_metrics_to_mlflow(drift_result: dict) -> None:
 
     This function logs:
       - Per-feature metric ``drift.{feature}.score`` (one per feature in ``drift_result["features"]``)
-      - Tags: ``drift.overall_severity``, ``drift.recommendation``,
-        ``drift.dataset_drift_detected``, ``drift.drifted_feature_count``,
-        ``drift.drift_share``
+      - Tags: ``drift.overall_severity``, ``drift.dataset_drift_detected``,
+        ``drift.drifted_feature_count``, ``drift.drift_share``
 
     Args:
         drift_result: Standard drift result dict as returned by
@@ -212,10 +211,8 @@ def log_drift_metrics_to_mlflow(drift_result: dict) -> None:
         mlflow.log_metrics(per_feature_metrics)
 
     overall = drift_result.get("overall") or {}
-    recommendation = drift_result.get("recommendation") or {}
     mlflow.set_tags({
         "drift.overall_severity": str(overall.get("severity", "")),
-        "drift.recommendation": str(recommendation.get("action", "")),
         "drift.dataset_drift_detected": "true" if overall.get("dataset_drift_detected") else "false",
         "drift.drifted_feature_count": str(overall.get("drifted_feature_count", 0)),
         "drift.drift_share": str(overall.get("drift_share", 0.0)),

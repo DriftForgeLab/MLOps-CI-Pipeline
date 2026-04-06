@@ -7,8 +7,6 @@ from src.config.schema import (
     DriftStatTestThresholdConfig,
     DriftSeverityConfig,
     DriftFeatureSeverityConfig,
-    DriftRecommendationConfig,
-    DriftPipelineConfig,
     DriftMonitoringConfig,
 )
 
@@ -41,20 +39,6 @@ def test_load_drift_config_severity_values():
     assert config.severity.medium_max == 0.50
     assert config.feature_severity.high_below == 0.001
     assert config.feature_severity.medium_below == 0.01
-
-
-def test_load_drift_config_recommendation_values():
-    config = load_drift_config(CONFIG_DIR / "drift.yaml")
-    assert config.recommendations.retrain_min_severity == "high"
-    assert config.recommendations.retrain_min_drift_share == 0.50
-    assert config.recommendations.collect_data_min_severity == "medium"
-    assert config.recommendations.collect_data_min_drift_share == 0.25
-
-
-def test_load_drift_config_pipeline_values():
-    config = load_drift_config(CONFIG_DIR / "drift.yaml")
-    assert config.pipeline.block_on_severity == "high"
-    assert config.pipeline.require_approval_on_drift is True
 
 
 def test_load_drift_config_monitoring_values():
@@ -163,17 +147,6 @@ def test_load_drift_config_invalid_reference_source(tmp_path):
         load_drift_config(cfg)
 
 
-def test_load_drift_config_invalid_block_on_severity(tmp_path):
-    cfg = tmp_path / "drift.yaml"
-    cfg.write_text(
-        "drift:\n"
-        "  pipeline:\n"
-        "    block_on_severity: critical\n"
-    )
-    with pytest.raises(ValueError, match="Invalid pipeline.block_on_severity"):
-        load_drift_config(cfg)
-
-
 def test_load_drift_config_invalid_alert_severity(tmp_path):
     cfg = tmp_path / "drift.yaml"
     cfg.write_text(
@@ -182,17 +155,6 @@ def test_load_drift_config_invalid_alert_severity(tmp_path):
         "    alert_severity: extreme\n"
     )
     with pytest.raises(ValueError, match="Invalid monitoring.alert_severity"):
-        load_drift_config(cfg)
-
-
-def test_load_drift_config_invalid_recommendation_severity(tmp_path):
-    cfg = tmp_path / "drift.yaml"
-    cfg.write_text(
-        "drift:\n"
-        "  recommendations:\n"
-        "    retrain_min_severity: critical\n"
-    )
-    with pytest.raises(ValueError, match="Invalid recommendations.retrain_min_severity"):
         load_drift_config(cfg)
 
 
@@ -228,13 +190,13 @@ def test_load_drift_config_empty_file(tmp_path):
 # Pipeline config integration: drift is optional in SubConfigPaths
 # ---------------------------------------------------------------------------
 
-def test_subconfigpaths_default_drift():
+def test_subconfigpaths_drift_is_required():
     from src.config.schema import SubConfigPaths
-    paths = SubConfigPaths(
-        preprocessing="a", training="b", evaluation="c",
-        promotion="d", deployment="e",
-    )
-    assert paths.drift == "src/config/drift.yaml"
+    with pytest.raises(TypeError):
+        SubConfigPaths(
+            preprocessing="a", training="b", evaluation="c",
+            promotion="d", deployment="e",
+        )
 
 
 def test_subconfigpaths_custom_drift():

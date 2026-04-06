@@ -28,7 +28,6 @@ def print_drift_summary(drift_result: dict) -> None:
     current = drift_result["current_dataset"]
     overall = drift_result["overall"]
     features = drift_result["features"]
-    recommendation = drift_result["recommendation"]
 
     print("\n" + _SEPARATOR)
     print("  DRIFT ANALYSIS SUMMARY")
@@ -66,11 +65,6 @@ def print_drift_summary(drift_result: dict) -> None:
             f"{status}   "
             f"severity: {feat_data['severity']}"
         )
-
-    # --- Recommendation ---
-    action_label = recommendation["action"].upper()
-    print(f"\n  Recommendation: {action_label}")
-    print(f"  Reason: {recommendation['reason']}")
 
     print("\n" + _SEPARATOR)
 

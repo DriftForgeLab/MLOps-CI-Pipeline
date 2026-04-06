@@ -23,6 +23,7 @@ configs:
   evaluation: "src/config/evaluation.yaml"
   deployment: "src/config/deployment.yaml"
   promotion: "src/config/promotion.yaml"
+  drift: "src/config/drift.yaml"
 log_level: "INFO"
 mlflow:
   tracking_uri: null

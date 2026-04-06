@@ -32,3 +32,7 @@ regression:
       threshold: 1.0
       operator: "<="
       description: "MAE must not exceed 1.0"
+
+# Drift severity at or above this level blocks promotion without prompting.
+# Valid values: "low", "medium", "high"
+drift_block_severity: "high"

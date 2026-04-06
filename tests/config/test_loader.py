@@ -14,7 +14,7 @@ def test_load_config_valid():
     assert config.random_seed == 42
     assert config.log_level == "INFO"
     assert config.project.name == "lightweight-mlops-pipeline"
-    assert config.pipeline_stages == ("preprocessing", "training", "evaluation", "promotion")
+    assert config.pipeline_stages == ("preprocessing", "training", "evaluation", "drift", "promotion")
     assert isinstance(config, PipelineConfig)
 
 def test_load_config_missing_file():

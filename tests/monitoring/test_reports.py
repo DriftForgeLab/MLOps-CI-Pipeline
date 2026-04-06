@@ -22,9 +22,7 @@ from src.monitoring.reports import (
 
 def _drift_result(
     *,
-    recommendation_action: str = "retrain",
     overall_severity: str = "high",
-    drifted_features: list[str] | None = None,
     features: dict | None = None,
     drift_share: float = 0.75,
     drifted_count: int = 3,
@@ -35,8 +33,6 @@ def _drift_result(
     current_source: str = "val",
 ) -> dict:
     """Build a complete drift_result dict for tests."""
-    if drifted_features is None:
-        drifted_features = ["sepal_length", "petal_length", "petal_width"]
     if features is None:
         features = {
             "sepal_length": {
@@ -99,18 +95,6 @@ def _drift_result(
             "severity": overall_severity,
         },
         "features": features,
-        "recommendation": {
-            "action": recommendation_action,
-            "reason": (
-                f"{len(drifted_features)} feature(s) drifted "
-                f"({drift_share:.0%} drift share, severity={overall_severity})."
-            ),
-            "details": {
-                "drifted_features": list(drifted_features),
-                "severity_counts": {"high": 1, "medium": 1, "low": 2},
-            },
-        },
-        "user_decision": None,
         "artifacts": {},
         "config_snapshot": {
             "stattest_numerical": "ks",
@@ -120,9 +104,6 @@ def _drift_result(
             "drift_share_threshold": 0.5,
             "severity_low_max": 0.25,
             "severity_medium_max": 0.50,
-            "feature_severity_high_below": 0.001,
-            "feature_severity_medium_below": 0.01,
-            "block_on_severity": "high",
         },
     }
 
@@ -167,7 +148,6 @@ class TestPrintDriftSummary:
             drifted_count=0,
             total_count=4,
             overall_severity="low",
-            drifted_features=[],
             features={
                 "x": {
                     "column_type": "num",
@@ -214,25 +194,14 @@ class TestPrintDriftSummary:
         assert "medium" in out
         assert "low" in out
 
-    def test_prints_recommendation_action_uppercase(self, capsys):
-        print_drift_summary(_drift_result(recommendation_action="retrain"))
-        out = capsys.readouterr().out
-        assert "RETRAIN" in out
-
-    def test_prints_recommendation_reason(self, capsys):
+    def test_no_recommendation_lines(self, capsys):
+        """Plan requires no recommendation/action lines in drift summary."""
         print_drift_summary(_drift_result())
         out = capsys.readouterr().out
-        assert "drifted" in out.lower()
-
-    def test_handles_collect_data_action(self, capsys):
-        print_drift_summary(_drift_result(recommendation_action="collect_data"))
-        out = capsys.readouterr().out
-        assert "COLLECT_DATA" in out or "COLLECT DATA" in out
-
-    def test_handles_monitor_action(self, capsys):
-        print_drift_summary(_drift_result(recommendation_action="monitor"))
-        out = capsys.readouterr().out
-        assert "MONITOR" in out
+        assert "Recommendation" not in out
+        assert "RETRAIN" not in out
+        assert "COLLECT_DATA" not in out
+        assert "MONITOR" not in out
 
     def test_no_ansi_color_codes(self, capsys):
         """Project style is color-neutral (matches _print_summary in approval.py)."""
@@ -266,8 +235,8 @@ class TestSaveDriftReportJson:
         assert loaded["schema_version"] == "1.0.0"
         assert loaded["drift_type"] == "tabular"
         assert loaded["overall"]["severity"] == "high"
-        assert loaded["recommendation"]["action"] == "retrain"
         assert "sepal_length" in loaded["features"]
+        assert "recommendation" not in loaded
 
     def test_creates_output_dir_if_missing(self, tmp_path):
         nested = tmp_path / "nested" / "drift"
@@ -278,13 +247,13 @@ class TestSaveDriftReportJson:
 
     def test_overwrites_existing_file(self, tmp_path):
         # First write
-        save_drift_report_json(_drift_result(recommendation_action="monitor"), tmp_path)
+        save_drift_report_json(_drift_result(overall_severity="low"), tmp_path)
         # Second write with different content
         path = save_drift_report_json(
-            _drift_result(recommendation_action="retrain"), tmp_path
+            _drift_result(overall_severity="high"), tmp_path
         )
         loaded = json.loads(path.read_text(encoding="utf-8"))
-        assert loaded["recommendation"]["action"] == "retrain"
+        assert loaded["overall"]["severity"] == "high"
 
     def test_sanitizes_nan_values(self, tmp_path):
         """atomic_write_json routes through sanitize_for_json → NaN becomes null."""

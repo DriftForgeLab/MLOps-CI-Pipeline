@@ -1,8 +1,8 @@
-"""Drift interpretation: severity classification and recommendation.
+"""Drift interpretation: severity classification.
 
-Converts raw Evidently drift scores into severity labels and produces a
-deterministic recommendation (retrain / collect_data / monitor). Assembles
+Converts raw Evidently drift scores into severity labels. Assembles
 the complete standard drift result JSON consumed by downstream layers.
+Severity alone is the decision input — no recommendation vocabulary.
 
 All functions are pure — no I/O, no randomness, no external state.
 """
@@ -12,7 +12,6 @@ from datetime import datetime, timezone
 from src.config.schema import (
     DriftConfig,
     DriftFeatureSeverityConfig,
-    DriftRecommendationConfig,
     DriftSeverityConfig,
 )
 
@@ -74,81 +73,6 @@ def classify_overall_severity(
     return "high"
 
 
-def compute_recommendation(
-    overall_severity: str,
-    drift_share: float,
-    rec_config: DriftRecommendationConfig,
-    drifted_features: list[str],
-    severity_counts: dict[str, int],
-) -> dict:
-    """Deterministic recommendation based on overall severity and drift share.
-
-    Policy (evaluated in order):
-      1. retrain  — if severity >= ``retrain_min_severity`` AND
-                    drift_share >= ``retrain_min_drift_share``
-      2. collect_data — if severity >= ``collect_data_min_severity`` AND
-                        drift_share >= ``collect_data_min_drift_share``
-      3. monitor — otherwise
-
-    Same inputs always produce byte-identical outputs.
-
-    Args:
-        overall_severity: ``"low"``, ``"medium"``, or ``"high"``.
-        drift_share:      Fraction of features that drifted (0.0–1.0).
-        rec_config:       Recommendation thresholds.
-        drifted_features: Names of features flagged as drifted (for details).
-        severity_counts:  Mapping of severity label → feature count (for details).
-
-    Returns:
-        Dict with ``action``, ``reason``, and ``details`` keys matching the
-        standard drift result schema.
-    """
-    severity_ord = _SEVERITY_ORD[overall_severity]
-    retrain_min_ord = _SEVERITY_ORD[rec_config.retrain_min_severity]
-    collect_min_ord = _SEVERITY_ORD[rec_config.collect_data_min_severity]
-
-    if (
-        severity_ord >= retrain_min_ord
-        and drift_share >= rec_config.retrain_min_drift_share
-    ):
-        action = "retrain"
-        reason = (
-            f"{len(drifted_features)} feature(s) drifted "
-            f"({drift_share:.0%} drift share, severity={overall_severity}) "
-            f"— exceeds retrain threshold "
-            f"(severity>={rec_config.retrain_min_severity}, "
-            f"share>={rec_config.retrain_min_drift_share:.0%})."
-        )
-    elif (
-        severity_ord >= collect_min_ord
-        and drift_share >= rec_config.collect_data_min_drift_share
-    ):
-        action = "collect_data"
-        reason = (
-            f"{len(drifted_features)} feature(s) drifted "
-            f"({drift_share:.0%} drift share, severity={overall_severity}) "
-            f"— exceeds collect_data threshold "
-            f"(severity>={rec_config.collect_data_min_severity}, "
-            f"share>={rec_config.collect_data_min_drift_share:.0%})."
-        )
-    else:
-        action = "monitor"
-        reason = (
-            f"{len(drifted_features)} feature(s) drifted "
-            f"({drift_share:.0%} drift share, severity={overall_severity}) "
-            f"— below all action thresholds."
-        )
-
-    return {
-        "action": action,
-        "reason": reason,
-        "details": {
-            "drifted_features": list(drifted_features),
-            "severity_counts": dict(severity_counts),
-        },
-    }
-
-
 def build_drift_result(
     overall_raw: dict,
     features_raw: dict,
@@ -177,9 +101,8 @@ def build_drift_result(
         task_type:             ``"classification"`` or ``"regression"``.
 
     Returns:
-        Dict conforming to the standard drift result schema. ``user_decision``
-        is ``None``; ``artifacts`` is an empty dict (populated later by the
-        reporting layer).
+        Dict conforming to the standard drift result schema. ``artifacts``
+        is an empty dict (populated later by the reporting layer).
     """
     # --- Per-feature severity classification ---
     features_out: dict = {}
@@ -205,17 +128,10 @@ def build_drift_result(
             "severity": severity,
         }
 
-    # --- Overall severity + recommendation ---
+    # --- Overall severity ---
     overall_severity = classify_overall_severity(
         drift_share=overall_raw["drift_share"],
         severity_config=drift_config.severity,
-    )
-    recommendation = compute_recommendation(
-        overall_severity=overall_severity,
-        drift_share=overall_raw["drift_share"],
-        rec_config=drift_config.recommendations,
-        drifted_features=drifted_features,
-        severity_counts=severity_counts,
     )
 
     overall_out = {
@@ -234,9 +150,6 @@ def build_drift_result(
         "drift_share_threshold": drift_config.drift_share,
         "severity_low_max": drift_config.severity.low_max,
         "severity_medium_max": drift_config.severity.medium_max,
-        "feature_severity_high_below": drift_config.feature_severity.high_below,
-        "feature_severity_medium_below": drift_config.feature_severity.medium_below,
-        "block_on_severity": drift_config.pipeline.block_on_severity,
     }
 
     return {
@@ -250,8 +163,6 @@ def build_drift_result(
         "current_dataset": dict(current_info),
         "overall": overall_out,
         "features": features_out,
-        "recommendation": recommendation,
-        "user_decision": None,
         "artifacts": {},
         "config_snapshot": config_snapshot,
     }
