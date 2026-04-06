@@ -28,7 +28,7 @@ class ApprovalResult:
     reason: str | None = None
 
 
-def request_approval(report: dict) -> ApprovalResult:
+def request_approval(report: dict, drift: dict | None = None) -> ApprovalResult:
     """
     Display a promotion summary and request explicit user approval via CLI.
 
@@ -38,11 +38,13 @@ def request_approval(report: dict) -> ApprovalResult:
 
     Args:
         report: The evaluation report dict produced by evaluate.py.
+        drift:  Optional drift result dict (from drift_result.json). When
+                provided, a drift status block is rendered inside the summary.
 
     Returns:
         ApprovalResult with approved=True, or approved=False with a reason.
     """
-    _print_summary(report)
+    _print_summary(report, drift=drift)
 
     print("\nManual approval required.")
     print("  [1] Approve — promote candidate to production")
@@ -74,7 +76,7 @@ def request_approval(report: dict) -> ApprovalResult:
     return ApprovalResult(approved=False, reason=None)
 
 
-def _print_summary(report: dict) -> None:
+def _print_summary(report: dict, drift: dict | None = None) -> None:
     """Print a human-readable promotion summary to stdout."""
     metrics = report.get("metrics", {})
     comparison = report.get("comparison", {})
@@ -106,4 +108,33 @@ def _print_summary(report: dict) -> None:
                 else:
                     print(f"    {metric_name:<20} {'N/A':<10}  ({verdict})")
 
+    if drift is not None:
+        _print_drift_block(drift)
+
     print("\n" + "=" * 60)
+
+
+def _print_drift_block(drift: dict) -> None:
+    """Render the drift status block inside the promotion summary."""
+    overall = drift.get("overall", {})
+    features = drift.get("features", {})
+
+    dataset_drift = overall.get("dataset_drift_detected", False)
+    severity = overall.get("severity", "unknown")
+    drifted_count = overall.get("drifted_feature_count", 0)
+    total_count = overall.get("total_feature_count", 0)
+
+    drifted_names = [
+        name for name, data in features.items()
+        if data.get("drift_detected")
+    ]
+
+    print("\n" + "-" * 60)
+    print("  DRIFT STATUS")
+    print("-" * 60)
+    print(f"  Dataset drift detected:   {dataset_drift}")
+    print(f"  Overall severity:         {severity.upper()}")
+    if drifted_names:
+        print(f"  Drifted features ({drifted_count}/{total_count}):   {', '.join(drifted_names)}")
+    else:
+        print(f"  Drifted features ({drifted_count}/{total_count}):   none")

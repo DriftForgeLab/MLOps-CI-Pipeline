@@ -15,6 +15,62 @@ def _minimal_report(metrics=None, comparison=None):
     }
 
 
+def _drift_dict(
+    dataset_drift_detected=True,
+    severity="medium",
+    drifted_feature_count=2,
+    total_feature_count=4,
+    drift_share=0.5,
+    features=None,
+):
+    """Build a minimal drift result dict matching the standard schema."""
+    if features is None:
+        features = {
+            "sepal_length": {
+                "column_type": "num",
+                "drift_detected": True,
+                "drift_score": 0.03,
+                "stattest_name": "ks",
+                "stattest_threshold": 0.05,
+                "severity": "medium",
+            },
+            "sepal_width": {
+                "column_type": "num",
+                "drift_detected": False,
+                "drift_score": 0.42,
+                "stattest_name": "ks",
+                "stattest_threshold": 0.05,
+                "severity": "low",
+            },
+            "petal_length": {
+                "column_type": "num",
+                "drift_detected": True,
+                "drift_score": 0.01,
+                "stattest_name": "ks",
+                "stattest_threshold": 0.05,
+                "severity": "medium",
+            },
+            "petal_width": {
+                "column_type": "num",
+                "drift_detected": False,
+                "drift_score": 0.78,
+                "stattest_name": "ks",
+                "stattest_threshold": 0.05,
+                "severity": "low",
+            },
+        }
+    return {
+        "overall": {
+            "dataset_drift_detected": dataset_drift_detected,
+            "drift_share": drift_share,
+            "drifted_feature_count": drifted_feature_count,
+            "total_feature_count": total_feature_count,
+            "severity": severity,
+        },
+        "features": features,
+    }
+
+
 # ── request_approval: approve path ─────────────────────────────────────────
 
 class TestApprovalApprove:
@@ -126,3 +182,82 @@ class TestPrintSummary:
         _print_summary(report)
         output = capsys.readouterr().out
         assert "EQUAL" in output
+
+
+# ── _print_summary: drift block ──────────────────────────────────────────────
+
+class TestPrintSummaryDrift:
+    """Drift-related parametrised cases for _print_summary."""
+
+    def test_drift_none_produces_no_drift_block(self, capsys):
+        """Backward compat: drift=None renders no drift section."""
+        _print_summary(_minimal_report(), drift=None)
+        output = capsys.readouterr().out
+        assert "DRIFT STATUS" not in output
+
+    @pytest.mark.parametrize(
+        "severity",
+        ["low", "medium"],
+    )
+    def test_drift_block_renders_severity(self, severity, capsys):
+        drift = _drift_dict(severity=severity)
+        _print_summary(_minimal_report(), drift=drift)
+        output = capsys.readouterr().out
+        assert "DRIFT STATUS" in output
+        assert f"Overall severity:         {severity.upper()}" in output
+
+    def test_drift_block_renders_dataset_drift_detected(self, capsys):
+        drift = _drift_dict(dataset_drift_detected=True)
+        _print_summary(_minimal_report(), drift=drift)
+        output = capsys.readouterr().out
+        assert "Dataset drift detected:   True" in output
+
+    def test_drift_block_renders_drifted_feature_names(self, capsys):
+        drift = _drift_dict()
+        _print_summary(_minimal_report(), drift=drift)
+        output = capsys.readouterr().out
+        assert "Drifted features (2/4):" in output
+        assert "sepal_length" in output
+        assert "petal_length" in output
+
+    def test_drift_block_no_drifted_features(self, capsys):
+        features = {
+            "f1": {
+                "column_type": "num",
+                "drift_detected": False,
+                "drift_score": 0.5,
+                "stattest_name": "ks",
+                "stattest_threshold": 0.05,
+                "severity": "low",
+            },
+        }
+        drift = _drift_dict(
+            dataset_drift_detected=False,
+            severity="low",
+            drifted_feature_count=0,
+            total_feature_count=1,
+            features=features,
+        )
+        _print_summary(_minimal_report(), drift=drift)
+        output = capsys.readouterr().out
+        assert "Drifted features (0/1):   none" in output
+        assert "Dataset drift detected:   False" in output
+
+
+# ── request_approval: drift kwarg forwarding ──────────────────────────────────
+
+class TestRequestApprovalDrift:
+    def test_drift_kwarg_renders_drift_block(self, monkeypatch, capsys):
+        monkeypatch.setattr("builtins.input", lambda prompt: "1")
+        drift = _drift_dict(severity="low")
+        result = request_approval(_minimal_report(), drift=drift)
+        output = capsys.readouterr().out
+        assert "DRIFT STATUS" in output
+        assert result.approved is True
+
+    def test_no_drift_kwarg_backward_compatible(self, monkeypatch, capsys):
+        monkeypatch.setattr("builtins.input", lambda prompt: "1")
+        result = request_approval(_minimal_report())
+        output = capsys.readouterr().out
+        assert "DRIFT STATUS" not in output
+        assert result.approved is True
