@@ -389,6 +389,16 @@ def run_image_preprocessing(
     }
     atomic_write_json(preprocessed_dir / "metadata.json", meta_payload)
 
+    # For raw-image runs: save the ISP config that was used, so the exact
+    # processing chain is auditable alongside the preprocessed outputs.
+    # None values mean "read from DNG metadata at runtime" — preserved as-is.
+    if img_config.raw_input and img_config.isp is not None:
+        import dataclasses
+        atomic_write_json(
+            preprocessed_dir / "isp_config.json",
+            dataclasses.asdict(img_config.isp),
+        )
+
     logger.info(
         "  Image preprocessing complete: %d classes, %s shape → %s/{train,val,test}.npz",
         len(class_names),

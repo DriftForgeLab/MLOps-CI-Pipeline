@@ -110,11 +110,12 @@ def log_training_artifacts_to_mlflow(model_dir: Path, preprocessed_dir: Path) ->
         _logger.warning("No active MLflow run — skipping training artifact logging.")
         return
     mlflow.log_artifacts(str(model_dir), artifact_path=MODEL_ARTIFACT_SUBPATH)
-    for fname in ("feature_map.json", "metadata.json"):
+    # isp_config.json is only present for raw-image runs; skip silently if absent.
+    for fname in ("feature_map.json", "metadata.json", "isp_config.json"):
         fpath = preprocessed_dir / fname
         if fpath.exists():
             mlflow.log_artifact(str(fpath), artifact_path="preprocessing")
-        else:
+        elif fname != "isp_config.json":
             _logger.warning("Preprocessing artifact not found, skipping: %s", fpath)
 
 
@@ -217,6 +218,39 @@ def log_drift_metrics_to_mlflow(drift_result: dict) -> None:
         "drift.drifted_feature_count": str(overall.get("drifted_feature_count", 0)),
         "drift.drift_share": str(overall.get("drift_share", 0.0)),
     })
+
+
+def log_isp_versioning_to_mlflow(metadata: dict, isp_config) -> None:
+    """Log ISP pipeline version and key config parameters to the active MLflow run.
+
+    Called from the preprocessing stage for raw-image tasks (raw_input=True).
+    Logs the pipeline version and preprocessing hash as params (stable,
+    queryable identifiers) and key ISP settings as tags (for UI discoverability).
+
+    Args:
+        metadata:   The metadata.json dict written by run_image_preprocessing().
+                    Must contain "pipeline_version" and "preprocess_hash".
+        isp_config: ISPConfig dataclass from the preprocessing config, or None.
+    """
+    if not mlflow.active_run():
+        _logger.warning("No active MLflow run — skipping ISP versioning logging.")
+        return
+
+    params: dict[str, str] = {}
+    if "pipeline_version" in metadata:
+        params["isp.pipeline_version"] = str(metadata["pipeline_version"])
+    if "preprocess_hash" in metadata:
+        params["preprocessing.hash"] = str(metadata["preprocess_hash"])
+    if params:
+        mlflow.log_params(params)
+
+    tags: dict[str, str] = {"isp.raw_input": "true"}
+    if isp_config is not None:
+        tags["isp.demosaicing_algorithm"] = str(isp_config.demosaicing.algorithm)
+        tags["isp.denoising_algorithm"] = str(isp_config.denoising.algorithm)
+        tags["isp.sharpening_algorithm"] = str(isp_config.sharpening.algorithm)
+        tags["isp.gamma"] = str(isp_config.gamma_correction.gamma)
+    mlflow.set_tags(tags)
 
 
 def log_drift_artifacts(drift_dir: Path) -> None:

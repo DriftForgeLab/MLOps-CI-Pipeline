@@ -19,7 +19,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.config.loader import PipelineConfig, load_promotion_config, load_drift_config
+from src.config.loader import PipelineConfig, load_promotion_config, load_drift_config, load_preprocessing_config
+from src.config.schema import IMAGE_TASK_TYPES
 from src.data.preprocess import run_preprocessing, PREPROCESSED_SUBDIR
 
 from src.training.classification.train import run_training as run_classification_training
@@ -33,7 +34,8 @@ from src.pipeline.mlflow_logger import (
     log_training_artifacts_to_mlflow,
     log_evaluation_to_mlflow,
     log_comparison_to_mlflow,
-    log_promotion_decision_to_mlflow
+    log_promotion_decision_to_mlflow,
+    log_isp_versioning_to_mlflow,
 )
 
 from src.promotion.rules import run_promotion_rules
@@ -72,13 +74,29 @@ def _placeholder_stage(config: PipelineConfig, version_id: str) -> None:
 
 
 def _preprocessing_stage(config: PipelineConfig, version_id: str) -> None:
+    prep_config_path = Path(config.configs.preprocessing)
     run_preprocessing(
         dataset_name=config.dataset,
         version_id=version_id,
-        prep_config_path=Path(config.configs.preprocessing),
+        prep_config_path=prep_config_path,
         processed_dir=Path(config.data.processed),
         random_seed=config.random_seed,
     )
+
+    # For raw-image tasks: log ISP pipeline version and key config params to MLflow.
+    # The preprocess_hash (written by run_image_preprocessing) covers the full ISP
+    # config + input manifest, so the same hash guarantees identical outputs.
+    if config.task_type in IMAGE_TASK_TYPES:
+        prep_config = load_preprocessing_config(prep_config_path)
+        if prep_config.image and prep_config.image.raw_input:
+            preprocessed_dir = (
+                Path(config.data.processed) / config.dataset / version_id / PREPROCESSED_SUBDIR
+            )
+            meta_path = preprocessed_dir / "metadata.json"
+            if meta_path.exists():
+                with open(meta_path) as f:
+                    meta = json.load(f)
+                log_isp_versioning_to_mlflow(meta, prep_config.image.isp)
 
 
 def _training_stage(config: PipelineConfig, version_id: str) -> None:

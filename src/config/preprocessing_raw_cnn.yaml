@@ -4,10 +4,20 @@
 # Used when the dataset consists of raw DNG files that must be processed
 # through the ISP pipeline before entering the standard CNN training flow.
 #
-# Flow: DNG → ISP pipeline → resize → normalize → CNN
+# Flow: DNG → ISP pipeline (7 steps) → resize → normalize → CNN
 #
 # Set raw_input: false (or use preprocessing_image.yaml) for standard
 # JPG/PNG datasets that skip the ISP pipeline entirely.
+#
+# Parameter sources
+# -----------------
+# Most ISP parameters have a dual source: the DNG file's embedded metadata
+# (camera-specific, read automatically) or an explicit override in this file.
+# Set a parameter to null to use the DNG value; set it to a number to override.
+# Partial overrides are supported — e.g. set only r_gain and leave b_gain as null.
+#
+# This override mechanism is also what the drift simulator uses: it re-runs
+# the ISP with modified parameter values to generate controlled drift scenarios.
 # =============================================================================
 
 fail_on_nulls: true
@@ -31,36 +41,125 @@ missing_values:
   categorical_strategy: "most_frequent"
   fill_value: null
 image:
-  target_size: [64, 64]
-  color_mode: "rgb"
-  normalize: true
-  flatten: false
-  raw_input: true
+  target_size: [64, 64]   # [height, width] in pixels after ISP and resize
+  color_mode: "rgb"        # "rgb" or "grayscale"
+  normalize: true          # scale pixel values to [0, 1] then channel-wise z-score
+  flatten: false           # false = keep spatial dims for CNN; true = flatten for sklearn
+  raw_input: true          # true  → load DNG files and run ISP pipeline (this config)
+                           # false → load JPG/PNG directly via PIL (use preprocessing_image.yaml)
   isp:
+
+    # -------------------------------------------------------------------------
+    # Step 1: Black level correction
+    # Subtracts the sensor's electronic offset from each Bayer channel.
+    # Required before any other step — skipping causes lifted shadows and
+    # incorrect colour balance.
+    # -------------------------------------------------------------------------
     black_level_correction:
       enabled: true
-      black_level: null          # null = read from DNG metadata (RGGB: [R, G1, G2, B])
+      # Per-channel offsets [R, G1, G2, B] in raw ADC units (pre-normalization).
+      # null = read from DNG metadata (recommended — camera-specific values).
+      # Override example for 12-bit sensor: [512, 512, 512, 512]
+      # Typical range: 256–4096 (12-bit) or 1024–16384 (14-bit).
+      black_level: null
 
+    # -------------------------------------------------------------------------
+    # Step 2: Demosaicing
+    # Reconstructs full RGB from the single-channel Bayer mosaic pattern.
+    # No parameters to override — algorithm is the only choice.
+    # -------------------------------------------------------------------------
     demosaicing:
-      algorithm: "bilinear"     # bilinear | malvar2004 | menon2007
+      # Algorithm controls quality vs. speed:
+      #   bilinear   — fastest; slight colour fringing at edges.
+      #                Good default for ML preprocessing where speed matters.
+      #   malvar2004 — better edge reconstruction; moderate speed.
+      #   menon2007  — highest quality; slowest. For colour-critical evaluation.
+      algorithm: "bilinear"
 
+    # -------------------------------------------------------------------------
+    # Step 3: White balance
+    # Multiplies each colour channel by a gain to neutralise the illuminant's
+    # colour cast. Green is the reference (g_gain normalized to 1.0).
+    # -------------------------------------------------------------------------
     white_balance:
-      r_gain: null               # null = read from DNG metadata (normalized: g=1.0)
+      # Per-channel gains relative to green (g_gain = 1.0).
+      # null = read from DNG camera_whitebalance metadata (recommended).
+      # Typical ranges (daylight / mixed lighting):
+      #   r_gain: 1.2 – 2.5   (red; higher under incandescent / lower outdoors)
+      #   g_gain: 1.0          (reference; always 1.0 after normalization)
+      #   b_gain: 0.8 – 2.0   (blue; higher outdoors / lower under tungsten)
+      # Drift scenario bounds: r_gain [0.5, 2.5], b_gain [0.5, 2.0]
+      r_gain: null
       g_gain: null
       b_gain: null
 
+    # -------------------------------------------------------------------------
+    # Step 4: Color correction matrix (CCM)
+    # Maps from the camera's native sensor colour space to standard sRGB using
+    # a 3×3 linear transform.
+    # -------------------------------------------------------------------------
     color_correction:
       enabled: true
-      matrix: null               # null = read from DNG metadata (9 floats, row-major)
+      # 9 floats in row-major order (3 rows × 3 cols):
+      #   [R→R, G→R, B→R,  R→G, G→G, B→G,  R→B, G→B, B→B]
+      # null = read from DNG color_matrix metadata (recommended).
+      # Identity matrix (no correction): [1,0,0, 0,1,0, 0,0,1]
+      # Most camera matrices have diagonal ~1.0 with cross-talk entries ≈ ±0.3.
+      matrix: null
 
+    # -------------------------------------------------------------------------
+    # Step 5: Denoising
+    # Smooths the luminance (Y) channel in YUV space to reduce sensor noise.
+    # Colour channels are not touched to preserve saturation.
+    # -------------------------------------------------------------------------
     denoising:
-      algorithm: "gaussian"     # gaussian | median | none
-      strength: 0.5             # [0.0, 1.0]: sigma for gaussian; scaled kernel size for median
+      # Algorithm:
+      #   gaussian  — Gaussian blur; strength is used directly as sigma.
+      #               Smooth, isotropic; slightly blurs fine edges.
+      #   median    — Median filter; strength maps to odd kernel size:
+      #               kernel = max(3, int(strength × 20) | 1).
+      #               Better edge preservation; slower at high strength.
+      #   none      — Skip denoising entirely.
+      algorithm: "gaussian"
+      # Strength: [0.0, 1.0], default 0.5
+      #   Gaussian:  strength = sigma directly.
+      #              0.0 → no blur; 0.5 → sigma=0.5 (mild); 1.0 → sigma=1.0
+      #   Median:    0.0 → kernel=3; 0.5 → kernel=11; 1.0 → kernel=21
+      # Drift scenario bounds: [0.0, 1.0]
+      strength: 0.5
 
+    # -------------------------------------------------------------------------
+    # Step 6: Sharpening
+    # Enhances edges on the luminance (Y) channel in YUV space.
+    # -------------------------------------------------------------------------
     sharpening:
-      algorithm: "unsharp_mask" # unsharp_mask | sharpen_filter | none
-      radius: 1.0               # [0.1, 5.0]: unsharp mask blur radius
-      amount: 1.0               # [0.0, 3.0]: unsharp mask strength
+      # Algorithm:
+      #   unsharp_mask   — out = original + amount × (original − blur(radius))
+      #                    Smooth, controllable. Recommended default.
+      #   sharpen_filter — Fixed 3×3 convolution kernel [[0,-1,0],[-1,5,-1],[0,-1,0]].
+      #                    Fast; radius and amount are ignored.
+      #   none           — Skip sharpening entirely.
+      algorithm: "unsharp_mask"
+      # radius: blur radius for unsharp_mask, in pixels. Range [0.1, 5.0].
+      #   Small (0.5–1.5) → sharpens fine detail.
+      #   Large (3.0–5.0) → sharpens coarser structures.
+      #   Ignored by sharpen_filter.
+      radius: 1.0
+      # amount: sharpening intensity for unsharp_mask. Range [0.0, 3.0].
+      #   0.0 → no sharpening; 1.0 → standard; >2.0 → ringing artefacts likely.
+      #   Ignored by sharpen_filter.
+      amount: 1.0
 
+    # -------------------------------------------------------------------------
+    # Step 7: Gamma correction
+    # Applies power-law tone mapping: out = clip(in, 0, 1) ^ (1 / gamma).
+    # Converts linear light values to perceptual brightness scale.
+    # -------------------------------------------------------------------------
     gamma_correction:
-      gamma: 2.2                # [1.0, 2.8]: standard sRGB gamma
+      # gamma: [1.0, 2.8], default 2.2 (sRGB standard).
+      #   1.0 → linear (very bright, no tone mapping)
+      #   1.8 → legacy Mac / print standard
+      #   2.2 → sRGB standard (recommended)
+      #   2.8 → darker output, compressed shadows
+      # Drift scenario bounds: [1.0, 2.8]
+      gamma: 2.2
