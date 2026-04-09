@@ -144,13 +144,6 @@ class TestTaskTypeRouting:
         assert len(violations) == 1
         assert violations[0]["rule_id"] == "cls1"
 
-    def test_image_classification_uses_classification_rules(self):
-        violations = run_promotion_rules(
-            {"accuracy": 0.70}, "image_classification", self.config,
-        )
-        assert len(violations) == 1
-        assert violations[0]["rule_id"] == "cls1"
-
     def test_image_classification_cnn_uses_classification_rules(self):
         violations = run_promotion_rules(
             {"accuracy": 0.70}, "image_classification_cnn", self.config,

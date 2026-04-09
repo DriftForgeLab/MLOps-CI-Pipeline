@@ -5,7 +5,7 @@
 # Tabular options (encoding, scaling, missing_values) are ignored for images.
 #
 # Used with task_type: image_classification_cnn for standard JPG/PNG datasets.
-# For raw DNG datasets requiring ISP preprocessing, use preprocessing_raw_cnn.yaml.
+# For raw DNG datasets requiring ISP preprocessing, use preprocessing_raw_image.yaml.
 # =============================================================================
 
 fail_on_nulls: true

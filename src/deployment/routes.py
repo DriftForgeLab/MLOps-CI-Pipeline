@@ -408,7 +408,7 @@ def _predict_tabular(model_info, body: dict):
 
 
 # ---------------------------------------------------------------------------
-# Image prediction (image_classification sklearn and image_classification_cnn)
+# Image prediction (image_classification_cnn — PyTorch CNN)
 # ---------------------------------------------------------------------------
 
 def _predict_image(model_info, body: dict):
@@ -448,17 +448,17 @@ def _predict_image(model_info, body: dict):
         )
 
     try:
-        if model_info.model_format == "pytorch":
-            import torch
-            # (H, W, C) → (1, C, H, W)
-            tensor = torch.tensor(
-                arr.transpose(2, 0, 1)[np.newaxis, ...], dtype=torch.float32
+        if model_info.model_format != "pytorch":
+            return JSONResponse(
+                status_code=500,
+                content={"detail": f"Unsupported model format '{model_info.model_format}' for image task. Expected 'pytorch'."}
             )
-            class_index = int(model_info.model.predict(tensor)[0])
-        else:
-            # sklearn image_classification — flatten to (1, H*W*C)
-            flat = arr.reshape(1, -1).astype(np.float32)
-            class_index = int(model_info.model.predict(flat)[0])
+        import torch
+        # NHWC (H, W, C) → NCHW (1, C, H, W) as required by PyTorch Conv2d
+        tensor = torch.tensor(
+            arr.transpose(2, 0, 1)[np.newaxis, ...], dtype=torch.float32
+        )
+        class_index = int(model_info.model.predict(tensor)[0])
     except Exception as e:
         logger.error("Image inference failed: %s", e)
         return JSONResponse(

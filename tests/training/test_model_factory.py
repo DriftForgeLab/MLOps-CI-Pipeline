@@ -36,7 +36,7 @@ SEED = 42
 # ── Valid algorithm + task_type combinations ─────────────────────────────────
 
 class TestValidCombinations:
-    @pytest.mark.parametrize("task_type", ["classification", "image_classification"])
+    @pytest.mark.parametrize("task_type", ["classification"])
     def test_random_forest_classifier(self, task_type):
         model = create_model(_rf_config(), task_type, SEED)
         assert isinstance(model, RandomForestClassifier)
@@ -47,7 +47,7 @@ class TestValidCombinations:
         assert isinstance(model, RandomForestRegressor)
         assert model.random_state == SEED
 
-    @pytest.mark.parametrize("task_type", ["classification", "image_classification"])
+    @pytest.mark.parametrize("task_type", ["classification"])
     def test_logistic_regression_classifier(self, task_type):
         model = create_model(_lr_config(), task_type, SEED)
         assert isinstance(model, LogisticRegression)
@@ -86,7 +86,6 @@ class TestInvalidCombinations:
         [
             ("logistic_regression", "regression"),
             ("linear_regression", "classification"),
-            ("linear_regression", "image_classification"),
             ("random_forest", "unknown_task"),
         ],
     )

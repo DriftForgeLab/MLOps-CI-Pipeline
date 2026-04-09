@@ -37,7 +37,7 @@ def _generate_image_dataset_yaml(dataset_dir: Path) -> None:
 
     print(f"\nImage dataset '{dataset_dir.name}' is missing dataset.yaml.")
     print(f"  Detected classes: {', '.join(class_names)}")
-    print(f"  Task type: image_classification (auto-detected from images/ folder)\n")
+    print(f"  Task type: image_classification_cnn (auto-detected from images/ folder)\n")
 
     source = _ask_text("  Source/origin of dataset", default="unknown")
     description = _ask_text("  Short description", default="")
@@ -51,7 +51,7 @@ def _generate_image_dataset_yaml(dataset_dir: Path) -> None:
 
     metadata = {
         "name": dataset_dir.name,
-        "task_type": "image_classification",
+        "task_type": "image_classification_cnn",
         "description": description,
         "source": source,
         "created_at": str(date.today()),

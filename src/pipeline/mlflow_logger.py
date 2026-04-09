@@ -281,3 +281,77 @@ def log_drift_artifacts(drift_dir: Path) -> None:
         mlflow.log_artifact(str(f), artifact_path="drift")
     mlflow.set_tag("has_drift_report", "true")
     _logger.info("Logged %d drift artifact(s) from %s", len(found), drift_dir)
+
+
+def log_image_drift_metrics_to_mlflow(drift_result: dict) -> None:
+    """Log image drift detection results from monitor_image_batch() to MLflow.
+
+    Logs per-channel Wasserstein scores and the overall drift score as metrics,
+    and overall severity / drift type as tags. If a scenario match is present,
+    the matched scenario name, confidence, and estimated accuracy drop are also
+    logged for traceability.
+
+    Args:
+        drift_result: Dict as returned by monitor_image_batch() (image_statistical
+                      or image_embedding).
+    """
+    if not mlflow.active_run():
+        _logger.warning("No active MLflow run — skipping image drift metric logging.")
+        return
+
+    overall = drift_result.get("overall", {})
+    metrics: dict[str, float] = {}
+    if "drift_score" in overall:
+        metrics["drift.image.overall_score"] = float(overall["drift_score"])
+
+    for ch, data in (drift_result.get("channels") or {}).items():
+        if "drift_score" in data:
+            metrics[f"drift.image.{ch}_score"] = float(data["drift_score"])
+
+    if metrics:
+        mlflow.log_metrics(metrics)
+
+    mlflow.set_tags({
+        "drift.image.method":          str(drift_result.get("method", "")),
+        "drift.image.severity":        str(overall.get("severity", "")),
+        "drift.image.drift_detected":  "true" if overall.get("dataset_drift_detected") else "false",
+    })
+
+    scenario_match = drift_result.get("scenario_match")
+    if scenario_match:
+        mlflow.set_tags({
+            "drift.image.matched_scenario": str(scenario_match.get("matched_scenario", "")),
+            "drift.image.match_confidence": str(scenario_match.get("confidence", "")),
+        })
+        drop = scenario_match.get("estimated_accuracy_drop")
+        if drop is not None:
+            mlflow.log_metric("drift.image.estimated_accuracy_drop", float(drop))
+
+
+def log_drift_decision_to_mlflow(decision_dict: dict) -> None:
+    """Log a drift response decision to the active MLflow run.
+
+    Records the decision option and severity as MLflow params (immutable,
+    queryable across runs) and the free-text reason as a tag (long text).
+    Also marks the run so it is discoverable by drift decision queries.
+
+    Args:
+        decision_dict: Dict as returned by DriftDecision.to_dict(). Must
+                       contain at minimum "option", "drift_severity",
+                       "decided_at", and "reason".
+    """
+    if not mlflow.active_run():
+        _logger.warning("No active MLflow run — skipping drift decision logging.")
+        return
+
+    mlflow.log_params({
+        "drift.decision.option":    str(decision_dict.get("option", "")),
+        "drift.decision.severity":  str(decision_dict.get("drift_severity", "")),
+        "drift.decision.decided_at": str(decision_dict.get("decided_at", "")),
+    })
+    mlflow.set_tags({
+        "drift.decision.reason":       str(decision_dict.get("reason", "")),
+        "drift.decision.drift_type":   str(decision_dict.get("drift_type", "")),
+        "drift.decision.report_linked": str(decision_dict.get("drift_report_linked", "")),
+        "has_drift_decision": "true",
+    })

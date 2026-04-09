@@ -41,9 +41,6 @@ from src.pipeline.mlflow_logger import (
 from src.promotion.rules import run_promotion_rules
 from src.promotion.approval import request_approval
 from src.registry.model_registry import PROMOTION_ARTIFACT_SUBDIR
-from src.evaluation.drift_tests import run_drift_analysis
-from src.monitoring.reports import save_drift_report_json, save_drift_report_html
-from src.pipeline.mlflow_logger import log_drift_metrics_to_mlflow
 import json
 import mlflow
 
@@ -104,9 +101,6 @@ def _training_stage(config: PipelineConfig, version_id: str) -> None:
         result = run_classification_training(config, version_id)
     elif config.task_type == "regression":
         result = run_regression_training(config, version_id)
-    elif config.task_type == "image_classification":
-        from src.training.image_classification.train import run_training as run_image_training
-        result = run_image_training(config, version_id)
     elif config.task_type == "image_classification_cnn":
         from src.training.image_classification_cnn.train import run_training as run_cnn_training
         result = run_cnn_training(config, version_id)
@@ -130,38 +124,186 @@ def _evaluation_stage(config: PipelineConfig, version_id: str) -> None:
     log_comparison_to_mlflow(report, output_dir=Path(config.output_dir))
     
 
-def _drift_stage(config: PipelineConfig, version_id: str) -> None:
-    """Run drift analysis and persist reports, metrics, and result JSON."""
+def _model_analysis_stage(config: PipelineConfig, version_id: str) -> None:
+    """Offline model analysis: ISP sensitivity or augmentation robustness.
+
+    Dispatches to the appropriate analysis based on task configuration:
+      - Raw DNG images (raw_input=True):  ISP-simulation + sensitivity analysis.
+        Systematically re-processes the training images with modified ISP
+        parameters to pre-compute drift signatures used by monitor-drift-image.
+      - Standard JPG/PNG images (raw_input=False): augmentation robustness
+        analysis. Applies geometric and photometric transformations to the
+        validation split and measures how much each transformation degrades
+        model accuracy before deployment.
+
+    Neither branch is drift detection. Drift detection — comparing training
+    data against new, real production batches over time — runs separately via
+    the monitoring CLIs (monitor-drift, monitor-drift-image).
+    """
     drift_config = load_drift_config(Path(config.configs.drift))
     if not drift_config.enabled:
-        logger.info("  Drift analysis disabled — skipping.")
+        logger.info("  Offline model analysis disabled — skipping.")
         return
 
-    drift_result, evidently_report = run_drift_analysis(
-        config, version_id, drift_config
+    _run_image_model_analysis_stage(config, version_id, drift_config)
+
+
+def _run_image_model_analysis_stage(config: PipelineConfig, version_id: str, drift_config) -> None:
+    """Dispatch to ISP sensitivity or augmentation robustness based on preprocessing config."""
+    prep_config_path = Path(config.configs.preprocessing)
+    prep_config = load_preprocessing_config(prep_config_path)
+    drift_dir = Path(config.data.drift_scenarios)
+    is_raw_isp = bool(
+        prep_config.image
+        and prep_config.image.raw_input
+        and prep_config.image.isp
     )
 
-    # Save reports to drift_scenarios dir (picked up by existing log_drift_artifacts)
-    drift_dir = Path(config.data.drift_scenarios)
-    save_drift_report_json(drift_result, drift_dir)
-    save_drift_report_html(evidently_report, drift_dir)
-
-    # Log drift metrics and tags to MLflow
-    log_drift_metrics_to_mlflow(drift_result)
-
-    # Write drift result for promotion stage to consume
-    drift_path = Path(config.output_dir) / "drift_result.json"
-    atomic_write_json(drift_path, drift_result)
-    logger.info("  Drift result written to: %s", drift_path.resolve())
+    if is_raw_isp:
+        _run_isp_simulation_and_sensitivity(config, version_id, drift_config, prep_config, drift_dir)
+    else:
+        _run_augmentation_robustness(config, version_id, drift_dir)
 
 
-# Ordinal ranking for comparing severity labels.
-_SEVERITY_ORD: dict[str, int] = {"low": 0, "medium": 1, "high": 2}
+def _run_isp_simulation_and_sensitivity(
+    config: PipelineConfig,
+    version_id: str,
+    drift_config,
+    prep_config,
+    drift_dir: Path,
+) -> Path | None:
+    """Run ISP drift simulation and sensitivity analysis.
+
+    Returns the path to sensitivity_report.json if successful, else None.
+    Called only when raw_input=True and an isp: block is present.
+    """
+    from src.data.image_drift_simulator import (
+        run_drift_simulation,
+        load_image_scenarios_from_drift_yaml,
+    )
+    from src.evaluation.image_drift_analysis import (
+        run_sensitivity_analysis,
+        save_sensitivity_report_json,
+        save_sensitivity_report_html,
+    )
+
+    scenarios, parameter_bounds = load_image_scenarios_from_drift_yaml(
+        Path(config.configs.drift)
+    )
+    if not scenarios:
+        logger.info("  No image drift scenarios configured in drift.yaml — skipping ISP simulation.")
+        return None
+
+    img_cfg = prep_config.image
+    results = run_drift_simulation(
+        dataset_name=config.dataset,
+        version_id=version_id,
+        baseline_isp_config=img_cfg.isp,
+        target_size=img_cfg.target_size,
+        color_mode=img_cfg.color_mode,
+        normalize=img_cfg.normalize,
+        scenarios=scenarios,
+        parameter_bounds=parameter_bounds,
+        drift_scenarios_dir=drift_dir,
+        processed_dir=Path(config.data.processed),
+    )
+    logger.info("  ISP drift simulation complete: %d scenario(s) generated", len(results))
+
+    if not results:
+        return None
+
+    baseline_report_path = Path(config.output_dir) / "evaluation_report.json"
+    sensitivity_report = run_sensitivity_analysis(
+        version_id=version_id,
+        task_type=config.task_type,
+        drift_scenarios_dir=drift_dir,
+        baseline_report_path=baseline_report_path,
+    )
+
+    json_path = save_sensitivity_report_json(sensitivity_report, drift_dir)
+    html_path = save_sensitivity_report_html(sensitivity_report, drift_dir)
+    logger.info("  Sensitivity report written: %s", json_path.resolve())
+
+    if mlflow.active_run():
+        mlflow.set_tags({
+            "analysis.type": "isp_sensitivity",
+            "analysis.scenarios_generated": str(len(results)),
+            "analysis.scenario_names": ",".join(r["name"] for r in results),
+            "analysis.most_sensitive_scenario": sensitivity_report.get("most_sensitive_scenario", ""),
+            "analysis.least_sensitive_scenario": sensitivity_report.get("least_sensitive_scenario", ""),
+        })
+        for scenario in sensitivity_report.get("scenarios", []):
+            name = scenario["name"]
+            acc = scenario["metrics"].get("accuracy")
+            f1  = scenario["metrics"].get("f1_score")
+            delta_acc = scenario["delta"].get("accuracy")
+            if acc is not None:
+                mlflow.log_metric(f"analysis.scenario.{name}.accuracy", acc)
+            if f1 is not None:
+                mlflow.log_metric(f"analysis.scenario.{name}.f1_score", f1)
+            if delta_acc is not None:
+                mlflow.log_metric(f"analysis.scenario.{name}.delta_accuracy", delta_acc)
+        mlflow.log_artifact(str(json_path), artifact_path="model_analysis")
+        mlflow.log_artifact(str(html_path), artifact_path="model_analysis")
+
+    return json_path
 
 
-def _severity_ge(severity: str, threshold: str) -> bool:
-    """Return True if *severity* is at or above *threshold*."""
-    return _SEVERITY_ORD.get(severity, 0) >= _SEVERITY_ORD.get(threshold, 0)
+def _run_augmentation_robustness(
+    config: PipelineConfig,
+    version_id: str,
+    drift_dir: Path,
+) -> None:
+    """Augmentation robustness analysis for standard JPG/PNG image pipelines.
+
+    Applies 8 fixed augmentation scenarios (horizontal flip, rotation, brightness
+    shifts, contrast reduction, Gaussian noise, Gaussian blur) to the validation
+    split and measures model accuracy under each transformation.
+
+    This is an offline stresstest of the model before deployment. It answers:
+      "If incoming images are slightly darker, blurrier, rotated, or noisier,
+       how much does accuracy drop?"
+
+    This is NOT drift detection. Augmented images are synthetic — they are
+    not real production batches. Production drift detection runs via the
+    monitoring CLI (monitor-drift-image) after real batches are collected.
+    """
+    from src.evaluation.standard_image_robustness import (
+        run_robustness_analysis,
+        save_robustness_report_json,
+        save_robustness_report_html,
+    )
+
+    preprocessed_dir = (
+        Path(config.data.processed) / config.dataset / version_id / PREPROCESSED_SUBDIR
+    )
+    baseline_report_path = Path(config.output_dir) / "evaluation_report.json"
+
+    robustness_report = run_robustness_analysis(
+        version_id=version_id,
+        task_type=config.task_type,
+        preprocessed_dir=preprocessed_dir,
+        baseline_report_path=baseline_report_path,
+    )
+
+    json_path = save_robustness_report_json(robustness_report, drift_dir)
+    html_path = save_robustness_report_html(robustness_report, drift_dir)
+    logger.info("  Augmentation robustness report written: %s", json_path.resolve())
+
+    if mlflow.active_run():
+        mlflow.set_tags({
+            "analysis.type": "augmentation_robustness",
+            "analysis.most_sensitive": robustness_report.get("most_sensitive_augmentation", ""),
+            "analysis.least_sensitive": robustness_report.get("least_sensitive_augmentation", ""),
+        })
+        for scenario in robustness_report.get("scenarios", []):
+            delta_acc = scenario["delta"].get("accuracy")
+            if delta_acc is not None:
+                mlflow.log_metric(
+                    f"analysis.robustness.{scenario['name']}.delta_accuracy", delta_acc
+                )
+        mlflow.log_artifact(str(json_path), artifact_path="model_analysis")
+        mlflow.log_artifact(str(html_path), artifact_path="model_analysis")
 
 
 def _promotion_stage(config: PipelineConfig, version_id: str) -> None:
@@ -178,27 +320,6 @@ def _promotion_stage(config: PipelineConfig, version_id: str) -> None:
     # Run threshold rules
     promotion_config = load_promotion_config(Path(config.configs.promotion))
     violations = run_promotion_rules(report["metrics"], config.task_type, promotion_config)
-
-    # Consume drift result if the drift stage produced one
-    drift_path = Path(config.output_dir) / "drift_result.json"
-    drift = None
-    if drift_path.exists():
-        with open(drift_path) as df:
-            drift = json.load(df)
-
-        severity = drift["overall"]["severity"]
-        if _severity_ge(severity, promotion_config.drift_block_severity):
-            violations.append({
-                "rule_id":     "DRIFT_SEVERITY",
-                "metric":      "drift.overall.severity",
-                "observed":    severity,
-                "operator":    "<",
-                "threshold":   promotion_config.drift_block_severity,
-                "description": (
-                    f"Drift severity '{severity}' exceeds blocking threshold "
-                    f"'{promotion_config.drift_block_severity}'"
-                ),
-            })
 
     if violations:
         violation_lines = "\n  ".join(
@@ -221,7 +342,7 @@ def _promotion_stage(config: PipelineConfig, version_id: str) -> None:
 
     logger.info("  All promotion rules passed — candidate is eligible for promotion.")
 
-    result = request_approval(report, drift=drift)
+    result = request_approval(report, drift=None)
 
     mlflow_run_id = mlflow.active_run().info.run_id if mlflow.active_run() else None
     decision = {
@@ -246,7 +367,7 @@ def _promotion_stage(config: PipelineConfig, version_id: str) -> None:
         reason_msg = f" Reason: {result.reason}" if result.reason else " No reason provided."
         raise ValueError(f"Promotion rejected by user.{reason_msg}")
 
-    # Register and promote the approved model in MLflow Model Registry (ID 9)
+    # Register and promote the approved model in MLflow Model Registry
     from src.registry.model_registry import (
         register_approved_model,
         promote_to_production,
@@ -261,12 +382,12 @@ def _promotion_stage(config: PipelineConfig, version_id: str) -> None:
 
 
 _STAGE_REGISTRY: dict[str, Callable] = {
-    "preprocessing": _preprocessing_stage,
-    "training":      _training_stage,
-    "evaluation":    _evaluation_stage,
-    "drift":         _drift_stage,
-    "promotion":     _promotion_stage,
-    "deployment":    _placeholder_stage,
+    "preprocessing":  _preprocessing_stage,
+    "training":       _training_stage,
+    "evaluation":     _evaluation_stage,
+    "model_analysis": _model_analysis_stage,
+    "promotion":      _promotion_stage,
+    "deployment":     _placeholder_stage,
 }
 
 

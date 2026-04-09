@@ -184,7 +184,7 @@ def _make_image_dataset_dir(tmp_path, classes=None, min_per_class=1):
 
     meta = {
         "name": "imgdata",
-        "task_type": "image_classification",
+        "task_type": "image_classification_cnn",
         "features": [],
         "target": "label",
         "schema": {},
@@ -233,7 +233,7 @@ def test_image_dataset_no_class_dirs_fails(tmp_path):
 
     meta = {
         "name": "imgdata",
-        "task_type": "image_classification",
+        "task_type": "image_classification_cnn",
         "features": [],
         "target": "label",
         "schema": {},

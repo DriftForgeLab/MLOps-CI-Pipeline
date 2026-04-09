@@ -134,17 +134,24 @@ def build_drift_result(
         severity_config=drift_config.severity,
     )
 
+    drift_share = overall_raw["drift_share"]
     overall_out = {
         "dataset_drift_detected": overall_raw["dataset_drift_detected"],
-        "drift_share": overall_raw["drift_share"],
+        "drift_score": drift_share,      # fraction of features drifted (0.0–1.0)
+        "drift_share": drift_share,      # kept for backwards compatibility
         "drifted_feature_count": overall_raw["drifted_feature_count"],
         "total_feature_count": overall_raw["total_feature_count"],
         "severity": overall_severity,
     }
 
+    # Derive a human-readable method label from configured stattests.
+    num_test = drift_config.stattest.numerical
+    cat_test = drift_config.stattest.categorical
+    method = num_test if num_test == cat_test else f"{num_test}/{cat_test}"
+
     config_snapshot = {
-        "stattest_numerical": drift_config.stattest.numerical,
-        "stattest_categorical": drift_config.stattest.categorical,
+        "stattest_numerical": num_test,
+        "stattest_categorical": cat_test,
         "stattest_threshold_numerical": drift_config.stattest_threshold.numerical,
         "stattest_threshold_categorical": drift_config.stattest_threshold.categorical,
         "drift_share_threshold": drift_config.drift_share,
@@ -155,6 +162,7 @@ def build_drift_result(
     return {
         "schema_version": SCHEMA_VERSION,
         "drift_type": DRIFT_TYPE_TABULAR,
+        "method": method,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "pipeline_execution_id": pipeline_execution_id,
         "dataset_version_id": dataset_version_id,

@@ -1,5 +1,5 @@
 # =============================================================================
-# src/config/preprocessing_raw_cnn.yaml — CNN preprocessing for raw DNG images
+# src/config/preprocessing_raw_image.yaml — CNN preprocessing for raw DNG images
 # =============================================================================
 # Used when the dataset consists of raw DNG files that must be processed
 # through the ISP pipeline before entering the standard CNN training flow.

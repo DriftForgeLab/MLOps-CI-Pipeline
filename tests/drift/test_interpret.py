@@ -186,7 +186,7 @@ class TestBuildDriftResult:
         result = self._call(overall_raw, features_raw)
 
         expected = {
-            "schema_version", "drift_type", "generated_at",
+            "schema_version", "drift_type", "method", "generated_at",
             "pipeline_execution_id", "dataset_version_id", "task_type",
             "reference_dataset", "current_dataset",
             "overall", "features", "artifacts", "config_snapshot",

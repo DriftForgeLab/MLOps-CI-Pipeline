@@ -44,7 +44,7 @@ data/raw/drone_raw/images/
     scene_a/    ← 6 files from step 1 (scene_a)
     scene_b/    ← 6 files from step 1 (scene_b)
 ```
-3. Run: `run-pipeline --config src/config/pipeline_raw_cnn.yaml`
+3. Run: `run-pipeline --config src/config/pipeline_raw_image.yaml`
 
 Note: Larger raw datasets are supported, but they require more storage, preprocessing time, and compute. In practice, large raw-image runs are better suited to local execution than routine execution in GitHub Actions.
 
@@ -84,5 +84,5 @@ run-pipeline --config src/config/pipeline_tabular.yaml
 run-pipeline --config src/config/pipeline_<name>.yaml
 ```
 
-For raw DNG images that require ISP preprocessing, use `preprocessing_raw_cnn.yaml` as the
+For raw DNG images that require ISP preprocessing, use `preprocessing_raw_image.yaml` as the
 preprocessing config. For standard JPG/PNG images, use `preprocessing_image.yaml`.

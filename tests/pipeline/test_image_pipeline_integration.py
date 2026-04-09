@@ -16,8 +16,6 @@ from PIL import Image
 from src.data.versioning import create_dataset_version
 from src.data.split import split_dataset
 from src.data.image_preprocess import run_image_preprocessing
-from src.training.image_classification.train import run_training
-from src.training import TrainingResult
 
 
 # ---------------------------------------------------------------------------
@@ -57,17 +55,6 @@ image:
     augmentation_factor: 1
 """
 
-_TRAINING_CONFIG_YAML = """\
-model:
-  algorithm: random_forest
-  hyperparameters:
-    n_estimators: 10
-    max_depth: 3
-    min_samples_split: 2
-    class_weight: null
-"""
-
-
 def _create_raw_image_dataset(raw_dir: Path, dataset_name: str = "test_images"):
     """Create a raw image dataset with ImageFolder structure."""
     dataset_dir = raw_dir / dataset_name
@@ -85,7 +72,7 @@ def _create_raw_image_dataset(raw_dir: Path, dataset_name: str = "test_images"):
 
     meta = {
         "name": dataset_name,
-        "task_type": "image_classification",
+        "task_type": "image_classification_cnn",
         "features": [],
         "target": "label",
         "schema": {},
@@ -110,7 +97,7 @@ def _create_raw_image_dataset(raw_dir: Path, dataset_name: str = "test_images"):
 # ---------------------------------------------------------------------------
 
 def test_full_image_pipeline(tmp_path):
-    """End-to-end: version -> split -> preprocess -> train on synthetic images."""
+    """End-to-end: version -> split -> preprocess on synthetic images."""
     raw_dir = tmp_path / "raw"
     processed_dir = tmp_path / "processed"
     dataset_name = _create_raw_image_dataset(raw_dir)
@@ -118,8 +105,6 @@ def test_full_image_pipeline(tmp_path):
     # Write config files
     prep_cfg = tmp_path / "preprocessing_image.yaml"
     prep_cfg.write_text(_PREP_CONFIG_YAML, encoding="utf-8")
-    train_cfg = tmp_path / "training.yaml"
-    train_cfg.write_text(_TRAINING_CONFIG_YAML, encoding="utf-8")
 
     # 1. Versioning
     version_id = create_dataset_version(
@@ -160,7 +145,7 @@ def test_full_image_pipeline(tmp_path):
 
     # Verify NPZ shapes
     train_data = np.load(preprocessed_dir / "train.npz")
-    assert train_data["X"].ndim == 2  # flattened
+    assert train_data["X"].ndim == 2  # flattened for compatibility
     assert train_data["X"].shape[1] == 16 * 16 * 3
 
     # Verify feature map
@@ -168,25 +153,3 @@ def test_full_image_pipeline(tmp_path):
         fmap = json.load(f)
     assert set(fmap["class_names"]) == {"class_a", "class_b"}
     assert fmap["num_features"] == 16 * 16 * 3
-
-    # 4. Training — use a mock PipelineConfig since we only need a subset
-    from unittest.mock import MagicMock
-    from src.config.loader import load_training_config
-
-    mock_config = MagicMock()
-    mock_config.dataset = dataset_name
-    mock_config.data.processed = str(processed_dir)
-    mock_config.configs.training = str(train_cfg)
-    mock_config.random_seed = 42
-    mock_config.task_type = "image_classification"
-
-    result = run_training(mock_config, version_id)
-    assert isinstance(result, TrainingResult)
-    assert result.algorithm == "random_forest"
-    assert result.train_rows == train_data["X"].shape[0]
-
-    # Model can predict on val data
-    val_data = np.load(preprocessed_dir / "val.npz")
-    predictions = result.model.predict(val_data["X"])
-    assert len(predictions) == val_data["X"].shape[0]
-    assert set(predictions).issubset({0, 1})

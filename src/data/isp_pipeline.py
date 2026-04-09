@@ -2,7 +2,7 @@
 # src/data/isp_pipeline.py — Image Signal Processing (ISP) pipeline
 # =============================================================================
 # Responsibility: Process raw Bayer images through a configurable 7-step ISP
-# pipeline. Pure NumPy, no side effects. Used both by the CNN preprocessing
+# pipeline. Used both by the CNN preprocessing
 # pipeline and by the drift scenario simulator.
 #
 # Pipeline steps (executed in order):
@@ -30,7 +30,7 @@
 #   from src.data.isp_pipeline import read_camera_params, run_isp
 #   from src.config.loader import load_preprocessing_config
 #
-#   prep = load_preprocessing_config(Path("src/config/preprocessing_raw_cnn.yaml"))
+#   prep = load_preprocessing_config(Path("src/config/preprocessing_raw_image.yaml"))
 #   dng_path = Path("data/raw/my_dataset/train/images/cls/frame_001.dng")
 #
 #   with rawpy.imread(str(dng_path)) as raw:
@@ -39,7 +39,7 @@
 #   camera_params = read_camera_params(dng_path)   # reads DNG metadata
 #   rgb = run_isp(bayer, prep.image.isp, camera_params)  # float64 [0, 1], shape (H, W, 3)
 #
-# Config structure (src/config/preprocessing_raw_cnn.yaml, image.isp block)
+# Config structure (src/config/preprocessing_raw_image.yaml, image.isp block)
 # --------------------------------------------------------------------------
 #   isp:
 #     black_level_correction:
