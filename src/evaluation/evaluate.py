@@ -118,7 +118,7 @@ def evaluate(
     )
     metrics_to_compare = [rule.metric for rule in task_config.rules]
 
-    # --- Production model lookup via MLflow Model Registry (ID 9) ---
+    # --- Production model lookup via MLflow Model Registry ---
     from src.registry.model_registry import get_production_model_metrics
     production_metrics = get_production_model_metrics(config)
     if production_metrics is None:

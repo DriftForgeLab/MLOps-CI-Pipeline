@@ -269,7 +269,7 @@ def validate_split_data(
             )
 
     # --- Label set check (classification only) ---
-    if task_type in ("classification", "image_classification") and target in df.columns:
+    if task_type in CLASSIFICATION_TASK_TYPES and target in df.columns:
         allowed_labels: set = set(constraints.get("label_classes", []))
         if allowed_labels:
             actual_labels: set = set(df[target].dropna().unique())

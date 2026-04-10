@@ -12,12 +12,12 @@ from dataclasses import dataclass, field
 # Pipeline constants
 # ---------------------------------------------------------------------------
 
-VALID_TASK_TYPES: frozenset[str] = {"classification", "regression", "image_classification", "image_classification_cnn"} #!!! May need to update VALIDATE and REQUIRED to ENUM in later sprints
-IMAGE_TASK_TYPES: frozenset[str] = frozenset({"image_classification", "image_classification_cnn"})
+VALID_TASK_TYPES: frozenset[str] = frozenset({"classification", "regression", "image_classification_cnn"})
+IMAGE_TASK_TYPES: frozenset[str] = frozenset({"image_classification_cnn"})
 CLASSIFICATION_TASK_TYPES: frozenset[str] = frozenset({"classification"}) | IMAGE_TASK_TYPES
-SKLEARN_TASK_TYPES: frozenset[str] = frozenset({"classification", "regression", "image_classification"})
+SKLEARN_TASK_TYPES: frozenset[str] = frozenset({"classification", "regression"})
 VALID_LOG_LEVELS: frozenset[str] = {"DEBUG", "INFO", "WARNING", "ERROR"}
-VALID_PIPELINE_STAGES: frozenset[str] = {"preprocessing", "training", "evaluation", "drift", "deployment", "promotion"} #!!! May need to update the validation of Deploymeny in later sprints
+VALID_PIPELINE_STAGES: frozenset[str] = {"preprocessing", "training", "evaluation", "model_analysis", "deployment", "promotion"}
 VALID_ALGORITHMS: frozenset[str] = {"random_forest", "logistic_regression", "linear_regression", "cnn"}
 VALID_SOLVERS: frozenset[str] = {"lbfgs", "saga", "liblinear"}
 VALID_CLASS_WEIGHTS: frozenset[str] = {"balanced"} ## May need other weights later
@@ -258,7 +258,7 @@ class ImagePreprocessingConfig:
     target_size: tuple[int, int] = (64, 64)  # (height, width)
     color_mode: str = "rgb"                   # "rgb" or "grayscale"
     normalize: bool = True                     # scale pixels to [0,1]
-    flatten: bool = True                       # flatten to 1D for sklearn
+    flatten: bool = False                      # legacy sklearn field — ignored for CNN pipelines
     augmentation: ImageAugmentationConfig = field(default_factory=ImageAugmentationConfig)
     raw_input: bool = False                    # if True, load DNG files and run ISP pipeline
     isp: ISPConfig | None = None               # required when raw_input=True
@@ -337,7 +337,6 @@ class PromotionTaskConfig:
 class PromotionConfig:
     classification: PromotionTaskConfig
     regression: PromotionTaskConfig
-    drift_block_severity: str = "high"
 
 # ---------------------------------------------------------------------------
 # Deployment config dataclasses

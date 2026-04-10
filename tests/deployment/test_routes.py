@@ -224,26 +224,8 @@ class TestPredictTabular:
 # ── POST /predict — image ──────────────────────────────────────────────────
 
 class TestPredictImage:
-    async def test_success_sklearn(self):
-        info = _make_model_info(
-            model_name="cifar",
-            algorithm="random_forest",
-            task_type="image_classification",
-            image_shape=[8, 8, 3],
-            feature_names=[],
-            index_to_class={"0": "cat", "1": "dog"},
-            predict_return=np.array([1]),
-        )
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=_make_app({"cifar": info})),
-            base_url="http://test",
-        ) as client:
-            resp = await client.post("/predict/cifar", json={"image": _make_image_base64()})
-            assert resp.status_code == 200
-            assert resp.json()["prediction"] == "dog"
-
     async def test_missing_image_field_422(self):
-        info = _make_model_info(image_shape=[8, 8, 3], feature_names=[])
+        info = _make_model_info(model_format="pytorch", image_shape=[8, 8, 3], feature_names=[])
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=_make_app({"m": info})),
             base_url="http://test",
@@ -253,7 +235,7 @@ class TestPredictImage:
             assert "image" in resp.json()["detail"].lower()
 
     async def test_invalid_base64_422(self):
-        info = _make_model_info(image_shape=[8, 8, 3], feature_names=[])
+        info = _make_model_info(model_format="pytorch", image_shape=[8, 8, 3], feature_names=[])
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=_make_app({"m": info})),
             base_url="http://test",
@@ -263,7 +245,7 @@ class TestPredictImage:
             assert "base64" in resp.json()["detail"].lower()
 
     async def test_corrupt_image_bytes_422(self):
-        info = _make_model_info(image_shape=[8, 8, 3], feature_names=[])
+        info = _make_model_info(model_format="pytorch", image_shape=[8, 8, 3], feature_names=[])
         bad_bytes = base64.b64encode(b"not-a-real-image").decode()
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=_make_app({"m": info})),
@@ -275,6 +257,7 @@ class TestPredictImage:
 
     async def test_inference_error_500(self):
         info = _make_model_info(
+            model_format="pytorch",
             image_shape=[8, 8, 3],
             feature_names=[],
             predict_side_effect=RuntimeError("boom"),
@@ -289,6 +272,7 @@ class TestPredictImage:
 
     async def test_class_index_fallback_when_missing(self):
         info = _make_model_info(
+            model_format="pytorch",
             image_shape=[8, 8, 3],
             feature_names=[],
             index_to_class=None,
@@ -322,6 +306,7 @@ class TestPredictImage:
 
     async def test_normalization_stats_applied(self):
         info = _make_model_info(
+            model_format="pytorch",
             image_shape=[8, 8, 3],
             feature_names=[],
             normalization_stats={
@@ -347,6 +332,7 @@ class TestPredictImage:
     async def test_zero_std_normalization_no_crash(self):
         """A channel with std=0 should not produce inf/nan."""
         info = _make_model_info(
+            model_format="pytorch",
             image_shape=[8, 8, 3],
             feature_names=[],
             normalization_stats={
@@ -361,5 +347,6 @@ class TestPredictImage:
         ) as client:
             resp = await client.post("/predict/m", json={"image": _make_image_base64()})
             assert resp.status_code == 200
-            arr = info.model.predict.call_args[0][0]
-            assert np.all(np.isfinite(arr))
+            import torch
+            tensor = info.model.predict.call_args[0][0]
+            assert torch.all(torch.isfinite(tensor))

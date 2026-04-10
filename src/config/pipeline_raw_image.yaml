@@ -7,6 +7,7 @@ pipeline_stages:
   - "preprocessing"
   - "training"
   - "evaluation"
+  - "model_analysis"
   - "promotion"
 output_dir: "outputs"
 
@@ -18,7 +19,7 @@ data:
   evaluation: "data/evaluation"
   drift_scenarios: "data/drift_scenarios"
 configs:
-  preprocessing: "src/config/preprocessing_raw_cnn.yaml"
+  preprocessing: "src/config/preprocessing_raw_image.yaml"
   training: "src/config/training_image_cnn.yaml"
   evaluation: "src/config/evaluation.yaml"
   deployment: "src/config/deployment.yaml"

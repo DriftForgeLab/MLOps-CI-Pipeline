@@ -83,8 +83,8 @@ def create_model(training_config: TrainingConfig, task_type: str, random_seed: i
     """
     Instantiate and return a scikit-learn estimator from a TrainingConfig.
 
-    Supported task types: classification, regression, image_classification.
-    CNN task types are handled separately outside this factory.
+    Supported task types: classification, regression (SKLEARN_TASK_TYPES).
+    CNN image models (image_classification_cnn) are handled separately.
 
     Args:
         training_config: Validated TrainingConfig from load_training_config()

@@ -68,7 +68,7 @@ image:
     augmentation_factor: 1
 ```
 
-**Raw DNG (ISP pipeline)** — `src/config/preprocessing_raw_cnn.yaml`:
+**Raw DNG (ISP pipeline)** — `src/config/preprocessing_raw_image.yaml`:
 ```yaml
 image:
   target_size: [64, 64]
@@ -99,8 +99,8 @@ configs:
   # ... other configs unchanged
 ```
 
-For raw DNG datasets, use `pipeline_raw_cnn.yaml` instead, which points to
-`preprocessing_raw_cnn.yaml`.
+For raw DNG datasets, use `pipeline_raw_image.yaml` instead, which points to
+`preprocessing_raw_image.yaml`.
 
 ## Architecture Configuration
 
@@ -129,7 +129,7 @@ model:
 run-pipeline --config src/config/pipeline_image.yaml
 
 # Raw DNG dataset (ISP pipeline)
-run-pipeline --config src/config/pipeline_raw_cnn.yaml
+run-pipeline --config src/config/pipeline_raw_image.yaml
 ```
 
 The pipeline executes: versioning → splitting → preprocessing → training →

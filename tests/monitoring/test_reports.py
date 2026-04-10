@@ -117,7 +117,7 @@ class TestPrintDriftSummary:
     def test_prints_header_and_separator(self, capsys):
         print_drift_summary(_drift_result())
         captured = capsys.readouterr().out
-        assert "DRIFT ANALYSIS SUMMARY" in captured
+        assert "DRIFT MONITORING RESULT" in captured
         assert "=" * 60 in captured
 
     def test_prints_reference_and_current_metadata(self, capsys):
@@ -130,10 +130,12 @@ class TestPrintDriftSummary:
         assert "val" in out
         assert "45" in out
 
-    def test_prints_task_type(self, capsys):
-        print_drift_summary(_drift_result(task_type="classification"))
+    def test_prints_method_when_present(self, capsys):
+        result = _drift_result()
+        result["method"] = "ks/chi_square"
+        print_drift_summary(result)
         out = capsys.readouterr().out
-        assert "classification" in out
+        assert "ks/chi_square" in out
 
     def test_prints_overall_drift_detected_and_severity(self, capsys):
         print_drift_summary(_drift_result(overall_severity="high"))
@@ -195,13 +197,12 @@ class TestPrintDriftSummary:
         assert "low" in out
 
     def test_no_recommendation_lines(self, capsys):
-        """Plan requires no recommendation/action lines in drift summary."""
+        """Summary should not contain action recommendation lines."""
         print_drift_summary(_drift_result())
         out = capsys.readouterr().out
         assert "Recommendation" not in out
         assert "RETRAIN" not in out
         assert "COLLECT_DATA" not in out
-        assert "MONITOR" not in out
 
     def test_no_ansi_color_codes(self, capsys):
         """Project style is color-neutral (matches _print_summary in approval.py)."""

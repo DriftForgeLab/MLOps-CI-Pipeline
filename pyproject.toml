@@ -29,10 +29,13 @@ dependencies = [
 ]
 
 [project.scripts]
-run-pipeline   = "src.pipeline.run_pipeline:main"
-rollback-model = "src.registry.rollback:main"
-run-api        = "src.deployment.app:main"
-monitor-drift  = "src.monitoring.monitor_cli:main"
+run-pipeline         = "src.pipeline.run_pipeline:main"
+rollback-model       = "src.registry.rollback:main"
+run-api              = "src.deployment.app:main"
+monitor-drift        = "src.monitoring.monitor_cli:main"
+monitor-drift-image  = "src.monitoring.image_monitor_cli:main"
+monitor-summary      = "src.monitoring.monitor_summary_cli:main"
+prepare-image-batch  = "src.data.prepare_batch_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

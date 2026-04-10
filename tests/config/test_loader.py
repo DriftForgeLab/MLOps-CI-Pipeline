@@ -14,7 +14,7 @@ def test_load_config_valid():
     assert config.random_seed == 42
     assert config.log_level == "INFO"
     assert config.project.name == "lightweight-mlops-pipeline"
-    assert config.pipeline_stages == ("preprocessing", "training", "evaluation", "drift", "promotion")
+    assert config.pipeline_stages == ("preprocessing", "training", "evaluation", "promotion")
     assert isinstance(config, PipelineConfig)
 
 def test_load_config_missing_file():
@@ -267,10 +267,10 @@ def test_image_config_invalid_target_size(tmp_path):
 # ISP config loading tests
 # ---------------------------------------------------------------------------
 
-def test_load_preprocessing_raw_cnn_roundtrip():
-    """preprocessing_raw_cnn.yaml must load cleanly and produce a valid ISPConfig."""
+def test_load_preprocessing_raw_image_roundtrip():
+    """preprocessing_raw_image.yaml must load cleanly and produce a valid ISPConfig."""
     from src.config.loader import load_preprocessing_config
-    prep = load_preprocessing_config(CONFIG_DIR / "preprocessing_raw_cnn.yaml")
+    prep = load_preprocessing_config(CONFIG_DIR / "preprocessing_raw_image.yaml")
 
     assert prep.image is not None
     assert prep.image.raw_input is True

@@ -49,12 +49,6 @@ class TestClassificationMetrics:
             val = metrics[key]
             assert val == round(val, 4)
 
-    def test_image_classification_uses_classification_path(self):
-        y = np.array([0, 1, 2, 0])
-        metrics = _compute_metrics(y, y, "image_classification", _eval_config())
-        assert "accuracy" in metrics
-        assert "confusion_matrix" not in metrics
-
     def test_zero_division_handled(self):
         y_true = np.array([0, 0, 0])
         y_pred = np.array([0, 0, 0])

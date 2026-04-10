@@ -102,7 +102,7 @@ def split_image_dataset(
         "train_ratio": train_ratio,
         "val_ratio": val_ratio,
         "test_ratio": test_ratio,
-        "task_type": metadata.get("task_type", "image_classification"),
+        "task_type": metadata.get("task_type", "image_classification_cnn"),
         "target": metadata.get("target", "label"),
     }
 

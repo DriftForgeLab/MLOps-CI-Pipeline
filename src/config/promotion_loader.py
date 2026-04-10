@@ -3,7 +3,6 @@
 from pathlib import Path
 
 from src.config.schema import (
-    VALID_DRIFT_SEVERITIES,
     VALID_OPERATORS,
     _REQUIRED_RULE_KEYS,
     PromotionRule,
@@ -47,16 +46,7 @@ def _build_promotion_task_config(raw: dict) -> PromotionTaskConfig:
 
 def load_promotion_config(path: Path) -> PromotionConfig:
     raw = _load_yaml(path)
-
-    drift_block_severity = raw.get("drift_block_severity", "high")
-    if drift_block_severity not in VALID_DRIFT_SEVERITIES:
-        raise ValueError(
-            f"Invalid drift_block_severity: '{drift_block_severity}' "
-            f"— must be one of {sorted(VALID_DRIFT_SEVERITIES)}"
-        )
-
     return PromotionConfig(
         classification=_build_promotion_task_config(raw.get("classification", {})),
         regression=_build_promotion_task_config(raw.get("regression", {})),
-        drift_block_severity=drift_block_severity,
     )

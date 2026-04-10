@@ -110,11 +110,12 @@ def log_training_artifacts_to_mlflow(model_dir: Path, preprocessed_dir: Path) ->
         _logger.warning("No active MLflow run — skipping training artifact logging.")
         return
     mlflow.log_artifacts(str(model_dir), artifact_path=MODEL_ARTIFACT_SUBPATH)
-    for fname in ("feature_map.json", "metadata.json"):
+    # isp_config.json is only present for raw-image runs; skip silently if absent.
+    for fname in ("feature_map.json", "metadata.json", "isp_config.json"):
         fpath = preprocessed_dir / fname
         if fpath.exists():
             mlflow.log_artifact(str(fpath), artifact_path="preprocessing")
-        else:
+        elif fname != "isp_config.json":
             _logger.warning("Preprocessing artifact not found, skipping: %s", fpath)
 
 
@@ -219,6 +220,39 @@ def log_drift_metrics_to_mlflow(drift_result: dict) -> None:
     })
 
 
+def log_isp_versioning_to_mlflow(metadata: dict, isp_config) -> None:
+    """Log ISP pipeline version and key config parameters to the active MLflow run.
+
+    Called from the preprocessing stage for raw-image tasks (raw_input=True).
+    Logs the pipeline version and preprocessing hash as params (stable,
+    queryable identifiers) and key ISP settings as tags (for UI discoverability).
+
+    Args:
+        metadata:   The metadata.json dict written by run_image_preprocessing().
+                    Must contain "pipeline_version" and "preprocess_hash".
+        isp_config: ISPConfig dataclass from the preprocessing config, or None.
+    """
+    if not mlflow.active_run():
+        _logger.warning("No active MLflow run — skipping ISP versioning logging.")
+        return
+
+    params: dict[str, str] = {}
+    if "pipeline_version" in metadata:
+        params["isp.pipeline_version"] = str(metadata["pipeline_version"])
+    if "preprocess_hash" in metadata:
+        params["preprocessing.hash"] = str(metadata["preprocess_hash"])
+    if params:
+        mlflow.log_params(params)
+
+    tags: dict[str, str] = {"isp.raw_input": "true"}
+    if isp_config is not None:
+        tags["isp.demosaicing_algorithm"] = str(isp_config.demosaicing.algorithm)
+        tags["isp.denoising_algorithm"] = str(isp_config.denoising.algorithm)
+        tags["isp.sharpening_algorithm"] = str(isp_config.sharpening.algorithm)
+        tags["isp.gamma"] = str(isp_config.gamma_correction.gamma)
+    mlflow.set_tags(tags)
+
+
 def log_drift_artifacts(drift_dir: Path) -> None:
     """Log drift report HTML/JSON to the active MLflow run if they exist.
 
@@ -247,3 +281,77 @@ def log_drift_artifacts(drift_dir: Path) -> None:
         mlflow.log_artifact(str(f), artifact_path="drift")
     mlflow.set_tag("has_drift_report", "true")
     _logger.info("Logged %d drift artifact(s) from %s", len(found), drift_dir)
+
+
+def log_image_drift_metrics_to_mlflow(drift_result: dict) -> None:
+    """Log image drift detection results from monitor_image_batch() to MLflow.
+
+    Logs per-channel Wasserstein scores and the overall drift score as metrics,
+    and overall severity / drift type as tags. If a scenario match is present,
+    the matched scenario name, confidence, and estimated accuracy drop are also
+    logged for traceability.
+
+    Args:
+        drift_result: Dict as returned by monitor_image_batch() (image_statistical
+                      or image_embedding).
+    """
+    if not mlflow.active_run():
+        _logger.warning("No active MLflow run — skipping image drift metric logging.")
+        return
+
+    overall = drift_result.get("overall", {})
+    metrics: dict[str, float] = {}
+    if "drift_score" in overall:
+        metrics["drift.image.overall_score"] = float(overall["drift_score"])
+
+    for ch, data in (drift_result.get("channels") or {}).items():
+        if "drift_score" in data:
+            metrics[f"drift.image.{ch}_score"] = float(data["drift_score"])
+
+    if metrics:
+        mlflow.log_metrics(metrics)
+
+    mlflow.set_tags({
+        "drift.image.method":          str(drift_result.get("method", "")),
+        "drift.image.severity":        str(overall.get("severity", "")),
+        "drift.image.drift_detected":  "true" if overall.get("dataset_drift_detected") else "false",
+    })
+
+    scenario_match = drift_result.get("scenario_match")
+    if scenario_match:
+        mlflow.set_tags({
+            "drift.image.matched_scenario": str(scenario_match.get("matched_scenario", "")),
+            "drift.image.match_confidence": str(scenario_match.get("confidence", "")),
+        })
+        drop = scenario_match.get("estimated_accuracy_drop")
+        if drop is not None:
+            mlflow.log_metric("drift.image.estimated_accuracy_drop", float(drop))
+
+
+def log_drift_decision_to_mlflow(decision_dict: dict) -> None:
+    """Log a drift response decision to the active MLflow run.
+
+    Records the decision option and severity as MLflow params (immutable,
+    queryable across runs) and the free-text reason as a tag (long text).
+    Also marks the run so it is discoverable by drift decision queries.
+
+    Args:
+        decision_dict: Dict as returned by DriftDecision.to_dict(). Must
+                       contain at minimum "option", "drift_severity",
+                       "decided_at", and "reason".
+    """
+    if not mlflow.active_run():
+        _logger.warning("No active MLflow run — skipping drift decision logging.")
+        return
+
+    mlflow.log_params({
+        "drift.decision.option":    str(decision_dict.get("option", "")),
+        "drift.decision.severity":  str(decision_dict.get("drift_severity", "")),
+        "drift.decision.decided_at": str(decision_dict.get("decided_at", "")),
+    })
+    mlflow.set_tags({
+        "drift.decision.reason":       str(decision_dict.get("reason", "")),
+        "drift.decision.drift_type":   str(decision_dict.get("drift_type", "")),
+        "drift.decision.report_linked": str(decision_dict.get("drift_report_linked", "")),
+        "has_drift_decision": "true",
+    })

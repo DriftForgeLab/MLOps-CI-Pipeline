@@ -90,7 +90,7 @@ class TestCreateImageVersion:
         images = ds_dir / "images" / "cat"
         images.mkdir(parents=True)
         (images / "img1.png").write_bytes(b"\x89PNG fake image bytes")
-        meta = {"task_type": "image_classification", "target_column": "label"}
+        meta = {"task_type": "image_classification_cnn", "target_column": "label"}
         with open(ds_dir / "dataset.yaml", "w") as f:
             yaml.dump(meta, f)
         return raw_dir
@@ -108,6 +108,6 @@ class TestCreateImageVersion:
         ds_dir = raw_dir / "noimg"
         ds_dir.mkdir(parents=True)
         with open(ds_dir / "dataset.yaml", "w") as f:
-            yaml.dump({"task_type": "image_classification"}, f)
+            yaml.dump({"task_type": "image_classification_cnn"}, f)
         with pytest.raises(FileNotFoundError, match="images"):
             create_dataset_version("noimg", raw_dir=raw_dir, processed_dir=tmp_path / "out")

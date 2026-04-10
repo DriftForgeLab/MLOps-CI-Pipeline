@@ -209,9 +209,9 @@ def test_subconfigpaths_custom_drift():
 
 
 # ---------------------------------------------------------------------------
-# VALID_PIPELINE_STAGES includes "drift"
+# VALID_PIPELINE_STAGES includes "model_analysis"
 # ---------------------------------------------------------------------------
 
-def test_drift_in_valid_pipeline_stages():
+def test_model_analysis_in_valid_pipeline_stages():
     from src.config.schema import VALID_PIPELINE_STAGES
-    assert "drift" in VALID_PIPELINE_STAGES
+    assert "model_analysis" in VALID_PIPELINE_STAGES

@@ -1,8 +1,8 @@
 # =============================================================================
 # src/data/image_preprocess.py — Image preprocessing pipeline
 # =============================================================================
-# Resizes, normalizes, optionally augments, and flattens images from split
-# directories into NPZ archives (train.npz, val.npz, test.npz) for sklearn.
+# Resizes, normalizes, and optionally augments images from split directories
+# into NPZ archives (train.npz, val.npz, test.npz) for CNN training.
 #
 # Leak-proof: normalization statistics (mean, std) are computed ONLY from
 # training images and applied to all splits.
@@ -84,8 +84,13 @@ def _load_and_transform_raw_images(
 
     This is the raw-input counterpart of _load_and_transform_images.
     Resize is performed on the float array (no intermediate uint8 conversion)
-    to avoid unnecessary precision loss. Output is scaled to [0, 255] to match
-    the existing contract expected by the normalization step in the caller.
+    to avoid unnecessary precision loss.
+
+    Unlike _load_and_transform_images (which returns [0, 255] from PIL), this
+    function returns values in [0, 1] float64 — the natural output range of the
+    ISP pipeline. The normalization step in the caller handles the two paths
+    differently: JPG/PNG divides by 255 first; raw images skip that step since
+    they are already in [0, 1].
 
     Args:
         images_dir:       Path to an ImageFolder split's images/ directory.
@@ -94,7 +99,7 @@ def _load_and_transform_raw_images(
 
     Returns:
         (images_array, labels, paths) where images_array has shape (N, H, W, C)
-        with values in [0, 255] float64 — same contract as _load_and_transform_images.
+        with values in [0, 1] float64.
     """
     try:
         import rawpy
@@ -144,8 +149,7 @@ def _load_and_transform_raw_images(
                     rgb, (target_h, target_w, 3), anti_aliasing=True
                 )
 
-            # Scale to [0, 255] to match the contract of _load_and_transform_images
-            arr = arr * 255.0
+            # arr is float64 in [0, 1] (ISP + skimage_resize preserve this range)
             arrays.append(arr)
             labels.append(class_name)
             paths.append(img_path)
@@ -187,7 +191,7 @@ def _apply_augmentation(
                 batch[flip_mask] = batch[flip_mask, :, ::-1]
 
         if aug_config.rotation_degrees > 0:
-            # Simple 90-degree rotation approximation for sklearn use case
+            # Simple 90-degree rotation approximation
             for i in range(len(batch)):
                 k = rng.randint(0, 4)  # 0, 90, 180, 270 degrees
                 if k > 0:
@@ -206,7 +210,7 @@ def run_image_preprocessing(
     processed_dir: Path = Path("data/processed"),
     random_seed: int | None = None,
 ) -> None:
-    """Run image preprocessing: resize, normalize, augment, flatten, save as NPZ."""
+    """Run image preprocessing: resize, normalize, augment, save as NPZ."""
     prep_config = load_preprocessing_config(prep_config_path)
     img_config = prep_config.image
 
@@ -254,7 +258,7 @@ def run_image_preprocessing(
         raise ValueError(
             "image.raw_input is True but no 'image.isp' block is configured. "
             "Add an 'isp:' section to your preprocessing config, or use "
-            "preprocessing_raw_cnn.yaml as a starting point."
+            "preprocessing_raw_image.yaml as a starting point."
         )
 
     # Build class mapping from training split (cached for reuse in the loop)
@@ -271,8 +275,10 @@ def run_image_preprocessing(
     class_to_index = {name: idx for idx, name in enumerate(class_names)}
     index_to_class = {str(idx): name for idx, name in enumerate(class_names)}
 
-    # Normalize: scale to [0,1] then channel-wise normalization from training set
-    if img_config.normalize:
+    # Scale to [0, 1] before computing stats.
+    # JPG/PNG images come from PIL as [0, 255] and need dividing.
+    # Raw ISP images are already [0, 1] — skip the division.
+    if img_config.normalize and not img_config.raw_input:
         X_train_raw = X_train_raw / 255.0
 
     # Compute normalization stats from training set ONLY (leak-proof)
@@ -318,9 +324,11 @@ def run_image_preprocessing(
                     split_images_dir, img_config.target_size, img_config.color_mode, expected_formats
                 )
 
-        # Normalize using training statistics
+        # Normalize using training statistics.
+        # For JPG/PNG: divide by 255 first (PIL returns [0, 255]).
+        # For raw ISP: already [0, 1] — skip the division.
         if img_config.normalize:
-            if split_name != "train":
+            if split_name != "train" and not img_config.raw_input:
                 X_raw = X_raw / 255.0
             X_raw = (X_raw - mean) / std
 
@@ -336,7 +344,7 @@ def run_image_preprocessing(
         if split_name == "train":
             X_raw, y = _apply_augmentation(X_raw, y, img_config.augmentation, random_seed)
 
-        # Flatten for sklearn
+        # Flatten (legacy option — ignored for CNN pipelines; flatten defaults to False)
         if img_config.flatten:
             X_raw = X_raw.reshape(X_raw.shape[0], -1)
 
@@ -388,6 +396,16 @@ def run_image_preprocessing(
         "image_shape": image_shape,
     }
     atomic_write_json(preprocessed_dir / "metadata.json", meta_payload)
+
+    # For raw-image runs: save the ISP config that was used, so the exact
+    # processing chain is auditable alongside the preprocessed outputs.
+    # None values mean "read from DNG metadata at runtime" — preserved as-is.
+    if img_config.raw_input and img_config.isp is not None:
+        import dataclasses
+        atomic_write_json(
+            preprocessed_dir / "isp_config.json",
+            dataclasses.asdict(img_config.isp),
+        )
 
     logger.info(
         "  Image preprocessing complete: %d classes, %s shape → %s/{train,val,test}.npz",

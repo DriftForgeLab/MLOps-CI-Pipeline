@@ -452,7 +452,7 @@ def _build_image_preprocessing_config(raw: dict | None) -> ImagePreprocessingCon
         target_size=tuple(ts),
         color_mode=raw.get("color_mode", "rgb"),
         normalize=raw.get("normalize", True),
-        flatten=raw.get("flatten", True),
+        flatten=raw.get("flatten", False),
         augmentation=ImageAugmentationConfig(
             enabled=aug_raw.get("enabled", False),
             horizontal_flip=aug_raw.get("horizontal_flip", False),

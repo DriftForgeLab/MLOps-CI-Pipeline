@@ -10,7 +10,6 @@ pipeline_stages:
   - "preprocessing"
   - "training"
   - "evaluation"
-  - "drift"
   - "promotion"
 
 output_dir: "outputs"

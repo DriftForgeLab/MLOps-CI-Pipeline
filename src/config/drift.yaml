@@ -48,3 +48,66 @@ drift:
     min_batch_size: 30
     # Notify user when severity reaches this level or higher
     alert_severity: "medium"
+
+  # ==========================================================================
+  # Image drift — ISP-based scenario simulation (raw DNG datasets only)
+  # Only used when raw_input: true in the preprocessing config.
+  # Ignored entirely for tabular and standard JPG/PNG image tasks.
+  # ==========================================================================
+  image:
+    # Drift scenarios: each defines a name, optional description, and ISP
+    # parameter overrides relative to the baseline preprocessing config.
+    # Only explicitly listed parameters are changed; all others keep their
+    # baseline values. Parameter values are clipped to parameter_bounds before
+    # use and a warning is logged if clipping occurs.
+    scenarios:
+      - name: "wb_shift_warm"
+        description: "White balance shifted toward warm tones (red gain increased, blue gain reduced)"
+        isp:
+          white_balance:
+            r_gain: 1.8
+            b_gain: 0.7
+
+      - name: "wb_shift_cool"
+        description: "White balance shifted toward cool tones (red gain reduced, blue gain increased)"
+        isp:
+          white_balance:
+            r_gain: 0.7
+            b_gain: 1.8
+
+      - name: "high_noise"
+        description: "Denoising disabled — simulates high-ISO sensor noise reaching the model"
+        isp:
+          denoising:
+            strength: 0.0
+
+      - name: "dark_gamma"
+        description: "High gamma — simulates an underexposed or dark pipeline output"
+        isp:
+          gamma_correction:
+            gamma: 2.8
+
+      - name: "bright_gamma"
+        description: "Low gamma — simulates an overexposed or bright pipeline output"
+        isp:
+          gamma_correction:
+            gamma: 1.2
+
+      - name: "heavy_sharpening"
+        description: "Aggressive unsharp mask — simulates over-sharpened pipeline"
+        isp:
+          sharpening:
+            amount: 2.5
+            radius: 2.0
+
+    # Bounds enforced on all scenario ISP overrides. Values outside these
+    # ranges are clipped to the nearest bound and logged as warnings.
+    # Keys use the format "isp_section.parameter_name".
+    parameter_bounds:
+      white_balance.r_gain:   [0.5, 2.5]
+      white_balance.g_gain:   [0.5, 2.0]
+      white_balance.b_gain:   [0.5, 2.0]
+      denoising.strength:     [0.0, 1.0]
+      sharpening.radius:      [0.1, 5.0]
+      sharpening.amount:      [0.0, 3.0]
+      gamma_correction.gamma: [1.0, 2.8]

@@ -18,7 +18,7 @@ _SEPARATOR = "=" * 60
 
 
 def print_drift_summary(drift_result: dict) -> None:
-    """Print a human-readable drift summary to stdout.
+    """Print a human-readable drift monitoring summary to stdout.
 
     Args:
         drift_result: Standard drift result dict as returned by
@@ -30,28 +30,33 @@ def print_drift_summary(drift_result: dict) -> None:
     features = drift_result["features"]
 
     print("\n" + _SEPARATOR)
-    print("  DRIFT ANALYSIS SUMMARY")
+    print("  DRIFT MONITORING RESULT")
     print(_SEPARATOR)
 
     # --- Dataset metadata ---
+    method = drift_result.get("method", "")
+    if method:
+        print(f"\n  Method:    {method}")
     print(
-        f"\n  Reference: {reference['source']} split "
+        f"  Reference: {reference['source']} split "
         f"({reference['row_count']} rows, {reference['feature_count']} features)"
     )
     print(
-        f"  Current:   {current['source']} split "
+        f"  Batch:     {current['source']} "
         f"({current['row_count']} rows, {current['feature_count']} features)"
     )
-    print(f"  Task type: {drift_result['task_type']}")
 
     # --- Overall drift status ---
     detected_label = "DETECTED" if overall["dataset_drift_detected"] else "NOT DETECTED"
     severity_label = overall["severity"].upper()
-    drift_share_pct = overall["drift_share"] * 100.0
-    print(f"\n  Overall drift: {detected_label} (severity: {severity_label})")
+    drift_score = overall.get("drift_score", overall.get("drift_share", 0))
+    drift_share_pct = drift_score * 100.0
+    print(f"\n  Drift score:      {drift_score:.4f}  ({drift_share_pct:.1f}% of features)")
+    print(f"  Drift detected:   {detected_label}")
+    print(f"  Severity:         {severity_label}")
     print(
         f"  Drifted features: {overall['drifted_feature_count']} / "
-        f"{overall['total_feature_count']} ({drift_share_pct:.1f}%)"
+        f"{overall['total_feature_count']}"
     )
 
     # --- Per-feature breakdown ---
