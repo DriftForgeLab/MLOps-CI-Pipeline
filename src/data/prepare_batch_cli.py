@@ -58,6 +58,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
+
 from src.config.loader import load_config, load_preprocessing_config
 from src.common.io import atomic_write_npz
 from src.data.prepare_batch import (
@@ -222,7 +224,8 @@ def main() -> None:
         output_path = Path("data/batches") / f"{timestamp}.npz"
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_npz(output_path, X=X)
+    # Store version_id so monitor-drift-image can verify batch and reference match
+    atomic_write_npz(output_path, X=X, version_id=np.array(version_id))
 
     print("\n" + "=" * 60)
     print("  BATCH PREPROCESSING COMPLETE")

@@ -289,7 +289,6 @@ def run_robustness_analysis(
         "baseline_metrics":          baseline_metrics,
         "robustness_thresholds":     thresholds,
         "total_images":              int(len(X_val)),
-        "filtered_images":           filtered_count,
         "scenarios":                 scenario_results,
         "most_sensitive_augmentation":  ranked[0]["name"],
         "least_sensitive_augmentation": ranked[-1]["name"],
@@ -437,7 +436,6 @@ def _render_html_report(report: dict) -> str:
     least_sens   = report.get("least_sensitive_augmentation", "—")
     thresholds   = report.get("robustness_thresholds", DEFAULT_ROBUSTNESS_THRESHOLDS)
     total_imgs   = report.get("total_images", "?")
-    filtered     = report.get("filtered_images", 0)
 
     high_pct   = int(thresholds.get("high", 0.15) * 100)
     medium_pct = int(thresholds.get("medium", 0.05) * 100)
@@ -467,8 +465,6 @@ def _render_html_report(report: dict) -> str:
           <td>{_fmt_delta(s.get('delta',{}), 'f1_score')}</td>
           <td style="color:{color};font-weight:bold">{sev.upper()}</td>
         </tr>"""
-
-    filter_note = f" ({filtered} excluded — unknown class)" if filtered else ""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -508,7 +504,7 @@ def _render_html_report(report: dict) -> str:
     <span><strong>Version:</strong> {version_id[:12]}</span>
     <span><strong>Evaluation split:</strong> {eval_split}</span>
     <span><strong>Generated:</strong> {generated_at} UTC</span>
-    <span><strong>Images evaluated:</strong> {total_imgs}{filter_note}</span>
+    <span><strong>Images evaluated:</strong> {total_imgs}</span>
   </div>
 
   <div class="summary">

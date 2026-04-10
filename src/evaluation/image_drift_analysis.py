@@ -153,18 +153,15 @@ def run_sensitivity_analysis(
         )
         if result is not None:
             scenario_results.append(result)
-            filtered = result.get("filtered_count", 0)
-            filter_note = f"  ({filtered} filtered)" if filtered else ""
             logger.info(
                 "  Scenario '%s': accuracy=%.4f  f1=%.4f  Δacc=%+.4f  "
-                "sensitivity=%s  [evaluated=%d%s]",
+                "sensitivity=%s  [evaluated=%d]",
                 result["name"],
                 result["metrics"]["accuracy"],
                 result["metrics"]["f1_score"],
                 result["delta"].get("accuracy", float("nan")),
                 result["sensitivity"],
                 result["evaluated_count"],
-                filter_note,
             )
 
     if not scenario_results:
@@ -280,6 +277,12 @@ def _evaluate_scenario(
     Uses val.npz — the same split as evaluate.py — so metrics are directly
     comparable to the baseline in evaluation_report.json.
 
+    Also computes per-channel gradient sensitivity: mean absolute input gradient
+    per channel, indicating which channels the model is most sensitive to under
+    this ISP scenario. This is an approximation of drift forensics — it reveals
+    which image channels carry the most information for the model's decisions
+    when the ISP is configured as in this scenario.
+
     Args:
         scenario_dir:     Directory containing val.npz and scenario_metadata.json.
         model:            Trained PyTorch CNN with a .predict() method.
@@ -307,9 +310,7 @@ def _evaluate_scenario(
     try:
         data = np.load(val_npz)
         X, y_true = data["X"], data["y"]
-        total_count = int(len(X))
-        evaluated_count = total_count
-        filtered_count = 0
+        evaluated_count = int(len(X))
 
         if evaluated_count == 0:
             logger.error("  Scenario '%s': val split is empty — skipping", metadata["scenario_name"])
@@ -340,16 +341,23 @@ def _evaluate_scenario(
     acc_drop = abs(delta.get("accuracy", 0.0))
     sensitivity = _classify_sensitivity(acc_drop, thresholds)
 
+    # --- Gradient sensitivity: mean |∂loss/∂input| per channel ---
+    # Runs a forward+backward pass on a small sample to estimate which input
+    # channels the model is most sensitive to under this ISP scenario.
+    # Inspired by drift forensics from the raw2logit paper (Oala et al., 2023):
+    # instead of a differentiable ISP, we use the already-trained CNN's
+    # input gradients on scenario images as a proxy for ISP parameter sensitivity.
+    channel_gradient_sensitivity = _compute_channel_gradient_sensitivity(model, X, y_true)
+
     return {
         "name": metadata["scenario_name"],
         "description": metadata.get("description", ""),
         "isp_overrides": metadata.get("isp_overrides", {}),
-        "total_count": total_count,
-        "filtered_count": filtered_count,
         "evaluated_count": evaluated_count,
         "metrics": metrics,
         "delta": delta,
         "sensitivity": sensitivity,
+        "channel_gradient_sensitivity": channel_gradient_sensitivity,
     }
 
 
@@ -391,6 +399,66 @@ def _classify_sensitivity(
     if accuracy_drop >= thresholds.get("medium", DEFAULT_SENSITIVITY_THRESHOLDS["medium"]):
         return "medium"
     return "low"
+
+
+def _compute_channel_gradient_sensitivity(
+    model,
+    X_nchw: np.ndarray,
+    y_true: np.ndarray,
+    max_samples: int = 32,
+) -> dict[str, float] | None:
+    """Compute mean absolute input gradient per channel for a scenario batch.
+
+    Runs a forward+backward pass through the CNN with cross-entropy loss and
+    returns the mean absolute gradient per input channel. Higher values indicate
+    channels the model relies on more heavily — and is therefore more vulnerable
+    to drift in — under this ISP scenario's image statistics.
+
+    This is a post-training approximation of drift forensics (Oala et al., 2023):
+    instead of a differentiable ISP, we measure how much the loss changes per
+    unit of input change in each channel, using the already-trained model.
+
+    Args:
+        model:       Trained SimpleCNN (PyTorch nn.Module with .forward()).
+        X_nchw:      Input array, shape (N, C, H, W), float32/float64.
+        y_true:      Ground-truth class indices, shape (N,).
+        max_samples: Limit to this many images to keep runtime short.
+
+    Returns:
+        Dict mapping "R", "G", "B" (or "C0", "C1", ...) to mean gradient
+        magnitude, rounded to 6 decimal places. None if computation fails.
+    """
+    try:
+        import torch
+        import torch.nn as nn
+
+        model.eval()
+
+        # Sample a subset to keep runtime bounded
+        n = min(len(X_nchw), max_samples)
+        idx = np.random.default_rng(seed=0).choice(len(X_nchw), size=n, replace=False)
+        X_sample = X_nchw[idx].astype(np.float32)
+        y_sample = y_true[idx].astype(np.int64)
+
+        X_tensor = torch.tensor(X_sample, dtype=torch.float32, requires_grad=True)
+        y_tensor = torch.tensor(y_sample, dtype=torch.long)
+
+        logits = model(X_tensor)
+        loss = nn.CrossEntropyLoss()(logits, y_tensor)
+        loss.backward()
+
+        # Mean absolute gradient per channel: shape (C,)
+        grad = X_tensor.grad.detach().abs().mean(dim=(0, 2, 3))  # (C,)
+        num_channels = grad.shape[0]
+
+        channel_names = {1: ["Y"], 3: ["R", "G", "B"], 4: ["R", "G1", "G2", "B"]}
+        names = channel_names.get(num_channels, [f"C{i}" for i in range(num_channels)])
+
+        return {name: round(float(grad[i].item()), 6) for i, name in enumerate(names)}
+
+    except Exception as e:
+        logger.warning("  Channel gradient sensitivity computation failed: %s", e)
+        return None
 
 
 def _render_html_report(report: dict) -> str:
@@ -449,17 +517,18 @@ def _render_html_report(report: dict) -> str:
         return f"{sign}{v:.4f}"
 
     def _fmt_counts(s: dict) -> str:
-        total = s.get("total_count", s.get("evaluated_count", "?"))
-        filtered = s.get("filtered_count", 0)
-        evaluated = s.get("evaluated_count", total)
-        if filtered:
-            return f'{evaluated} <span style="color:#c0392b" title="{filtered} excluded (unknown class)">(−{filtered})</span>'
-        return str(evaluated)
+        return str(s.get("evaluated_count", "?"))
+
+    def _fmt_grad_sensitivity(grad: dict | None) -> str:
+        if not grad:
+            return "N/A"
+        return " | ".join(f"{ch}: {v:.4f}" for ch, v in grad.items())
 
     rows = ""
     for s in scenarios:
         sev = s.get("sensitivity", "low")
         color = _SEVERITY_COLORS.get(sev, "#888")
+        grad_sens = _fmt_grad_sensitivity(s.get("channel_gradient_sensitivity"))
         rows += f"""
         <tr>
           <td><strong>{s['name']}</strong></td>
@@ -470,6 +539,7 @@ def _render_html_report(report: dict) -> str:
           <td>{_fmt_delta(s.get('delta', {}), 'accuracy')}</td>
           <td>{_fmt_delta(s.get('delta', {}), 'f1_score')}</td>
           <td style="color:{color}; font-weight:bold">{sev.upper()}</td>
+          <td style="font-size:0.85em; color:#444">{grad_sens}</td>
           <td style="color:#555; font-size:0.85em">{s.get('description', '')}</td>
         </tr>"""
 
@@ -530,6 +600,7 @@ def _render_html_report(report: dict) -> str:
         <th>Δ Accuracy</th>
         <th>Δ F1</th>
         <th>Sensitivity</th>
+        <th>Gradient sensitivity (R|G|B)</th>
         <th>Description</th>
       </tr>
     </thead>
