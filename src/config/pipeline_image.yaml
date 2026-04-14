@@ -29,4 +29,4 @@ log_level: "INFO"
 mlflow:
   tracking_uri: null
   experiment_name: null
-  registry_model_name: null
+  registry_model_name: "lightweight-mlops-pipeline-standard-images"
