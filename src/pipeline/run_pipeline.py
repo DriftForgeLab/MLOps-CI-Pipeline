@@ -103,6 +103,9 @@ def main() -> None:
             result = execute_stage(stage_name, config, version_id)
             stage_results.append(result)
 
+            if result.status == "blocked":
+                overall_status = "blocked"
+                break
             if result.status == "failed":
                 logger.error("Stage '%s' failed - aborting remaining steps", stage_name)
                 overall_status = "failed"
@@ -115,7 +118,12 @@ def main() -> None:
 
         if mlflow.active_run():
             mlflow.log_artifact(str(config_path), artifact_path="config")
-            log_isp_scenario_artifacts(Path(config.data.drift_scenarios))
+            analysis_ran = any(
+                r.stage == "model_analysis" and r.status == "completed"
+                for r in stage_results
+            )
+            if analysis_ran:
+                log_isp_scenario_artifacts(Path(config.data.drift_scenarios) / config.dataset / version_id)
 
         mlflow_run_id = mlflow.active_run().info.run_id if mlflow.active_run() else None
 
@@ -138,6 +146,20 @@ def main() -> None:
             mlflow.log_artifact(str(output_report_path), artifact_path="outputs")
     finally:
         mlflow.end_run()
+
+    if overall_status == "blocked":
+        blocked_result = next(r for r in stage_results if r.status == "blocked")
+        print("\n" + "=" * 60)
+        print("  PIPELINE STOPPED — MODEL DID NOT MEET PROMOTION CRITERIA")
+        print("=" * 60)
+        for line in blocked_result.error.splitlines():
+            print(f"  {line}")
+        print()
+        print("  The model has been trained and evaluated but will NOT be")
+        print("  promoted to production. Improve the model or dataset and")
+        print("  re-run the pipeline.")
+        print("=" * 60 + "\n")
+        sys.exit(2)
 
     if overall_status == "failed":
         logger.error("Pipeline finished with failures")

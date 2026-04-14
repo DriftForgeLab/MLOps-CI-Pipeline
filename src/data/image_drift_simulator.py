@@ -11,10 +11,10 @@
 # sensitive the model is to each type of ISP change.
 #
 # Output structure (per scenario):
-#   drift_scenarios/<scenario_name>/train.npz          — (N, H, W, C) float64
-#   drift_scenarios/<scenario_name>/val.npz
-#   drift_scenarios/<scenario_name>/test.npz
-#   drift_scenarios/<scenario_name>/scenario_metadata.json
+#   drift_scenarios/<dataset>/<version_id>/<scenario_name>/train.npz   — (N, H, W, C) float64
+#   drift_scenarios/<dataset>/<version_id>/<scenario_name>/val.npz
+#   drift_scenarios/<dataset>/<version_id>/<scenario_name>/test.npz
+#   drift_scenarios/<dataset>/<version_id>/<scenario_name>/scenario_metadata.json
 #
 # Only used when raw_input: true. For JPG/PNG datasets, see the Albumentations
 # robustness path which is a separate analysis type.

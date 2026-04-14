@@ -18,9 +18,10 @@ ONE-STEP usage — standard JPG/PNG (preprocessing + monitoring in one command):
 ONE-STEP usage — raw-image pipeline with ISP scenario interpretation:
     monitor-drift-image \\
         --input-dir data/incoming/drone_batch_001 \\
-        --config src/config/pipeline_raw_image.yaml \\
-        --drift-scenarios-dir data/drift_scenarios/ \\
-        --sensitivity-report data/drift_scenarios/sensitivity_report.json
+        --config src/config/pipeline_raw_image.yaml
+
+    ISP scenario dir and sensitivity report are auto-resolved from
+    data/drift_scenarios/<dataset>/<version_id>/ when not specified.
 
 TWO-STEP usage (if batch NPZ already exists from prepare-image-batch):
     monitor-drift-image \\
@@ -513,12 +514,35 @@ def main() -> None:
         logger.info("Loaded model for embedding drift: %s", pt_path.name)
 
     # --- Resolve optional ISP scenario matching ---
-    drift_scenarios_dir = (
-        Path(args.drift_scenarios_dir) if args.drift_scenarios_dir else None
-    )
-    sensitivity_report_path = (
-        Path(args.sensitivity_report) if args.sensitivity_report else None
-    )
+    # For raw-ISP pipelines, auto-resolve the versioned drift_scenarios dir when
+    # not explicitly provided: data/drift_scenarios/<dataset>/<version_id>/
+    drift_scenarios_dir: Path | None = None
+    if args.drift_scenarios_dir:
+        drift_scenarios_dir = Path(args.drift_scenarios_dir)
+    elif is_raw_isp_pipeline and version_id is not None:
+        dataset_name = args.dataset_name or config.dataset
+        candidate = Path(config.data.drift_scenarios) / dataset_name / version_id
+        if candidate.exists():
+            drift_scenarios_dir = candidate
+            logger.info(
+                "Auto-resolved drift scenarios dir: %s", drift_scenarios_dir
+            )
+        else:
+            logger.info(
+                "No pre-computed ISP scenarios found at '%s' — "
+                "running without scenario interpretation. "
+                "Run the pipeline with model_analysis to generate scenarios.",
+                candidate,
+            )
+
+    sensitivity_report_path: Path | None = None
+    if args.sensitivity_report:
+        sensitivity_report_path = Path(args.sensitivity_report)
+    elif drift_scenarios_dir is not None:
+        candidate_report = drift_scenarios_dir / "sensitivity_report.json"
+        if candidate_report.exists():
+            sensitivity_report_path = candidate_report
+            logger.info("Auto-resolved sensitivity report: %s", sensitivity_report_path)
 
     is_raw_isp = drift_scenarios_dir is not None
     if is_raw_isp:

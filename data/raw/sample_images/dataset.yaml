@@ -1,5 +1,5 @@
 name: sample_images
-task_type: image_classification
+task_type: image_classification_cnn
 description: "Synthetic image classification dataset for testing"
 source: "generated"
 created_at: "2026-03-18"
