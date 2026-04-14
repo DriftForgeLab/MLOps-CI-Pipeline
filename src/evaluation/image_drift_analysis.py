@@ -33,8 +33,8 @@
 # touching this module. Defaults are documented in DEFAULT_SENSITIVITY_THRESHOLDS.
 #
 # Output:
-#   drift_scenarios/sensitivity_report.json  — machine-readable full report
-#   drift_scenarios/sensitivity_report.html  — human-readable summary table
+#   drift_scenarios/<dataset>/<version_id>/sensitivity_report.json  — machine-readable full report
+#   drift_scenarios/<dataset>/<version_id>/sensitivity_report.html  — human-readable summary table
 #
 # The caller (_run_isp_simulation_and_sensitivity in steps.py) handles MLflow
 # logging, so this module has no MLflow dependency.

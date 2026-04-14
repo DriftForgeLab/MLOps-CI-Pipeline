@@ -254,32 +254,38 @@ def log_isp_versioning_to_mlflow(metadata: dict, isp_config) -> None:
 
 
 def log_isp_scenario_artifacts(scenario_dir: Path) -> None:
-    """Log ISP sensitivity / scenario report HTML/JSON to the active MLflow run.
+    """Log model analysis report HTML/JSON to the active MLflow run.
 
-    Despite the legacy directory name (`drift_scenarios`), these are offline ISP
-    perturbation reports — not runtime drift detection results. Runtime drift is
-    handled by the monitor CLIs and logged via `log_drift_metrics_to_mlflow`.
+    Handles both report types depending on pipeline:
+      - Raw DNG pipelines:      sensitivity_report.{json,html}
+      - Standard image pipelines: robustness_report.{json,html}
+
+    Runtime drift detection results are handled separately by the monitor CLIs
+    and logged via `log_drift_metrics_to_mlflow`.
     """
     if not mlflow.active_run():
-        _logger.warning("No active MLflow run — skipping ISP scenario artifact logging.")
+        _logger.warning("No active MLflow run — skipping model analysis artifact logging.")
         return
+
     candidates = [
         scenario_dir / "sensitivity_report.html",
         scenario_dir / "sensitivity_report.json",
+        scenario_dir / "robustness_report.html",
+        scenario_dir / "robustness_report.json",
     ]
     found = [f for f in candidates if f.exists()]
 
     if not found:
-        _logger.warning(
-            "No ISP sensitivity reports found at %s — skipping artifact logging.", scenario_dir
+        _logger.info(
+            "No model analysis reports found at %s — model analysis was likely skipped.", scenario_dir
         )
-        mlflow.set_tag("has_isp_scenarios", "false")
+        mlflow.set_tag("has_model_analysis", "false")
         return
 
     for f in found:
-        mlflow.log_artifact(str(f), artifact_path="isp_scenarios")
-    mlflow.set_tag("has_isp_scenarios", "true")
-    _logger.info("Logged %d ISP scenario artifact(s) from %s", len(found), scenario_dir)
+        mlflow.log_artifact(str(f), artifact_path="model_analysis")
+    mlflow.set_tag("has_model_analysis", "true")
+    _logger.info("Logged %d model analysis artifact(s) from %s", len(found), scenario_dir)
 
 
 def log_image_drift_metrics_to_mlflow(drift_result: dict) -> None:

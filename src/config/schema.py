@@ -30,7 +30,7 @@ CNN_HYPERPARAMS_KEYS: frozenset[str] = {"epochs", "batch_size", "learning_rate"}
 CNN_ARCHITECTURE_KEYS: frozenset[str] = {"conv_layers", "fc_units", "dropout"}
 CNN_CONV_LAYER_KEYS: frozenset[str] = {"out_channels", "kernel_size"}
 
-REQUIRED_TOP_LEVEL_KEYS: frozenset[str] = {"project", "task_type", "random_seed", "pipeline_stages", "output_dir", "data", "configs", "log_level", "dataset"}
+REQUIRED_TOP_LEVEL_KEYS: frozenset[str] = {"project", "task_type", "random_seed", "pipeline_stages", "output_dir", "data", "configs", "log_level", "dataset", "mlflow"}
 
 # ---------------------------------------------------------------------------
 # Preprocessing constants
