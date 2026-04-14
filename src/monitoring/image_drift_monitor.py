@@ -74,7 +74,7 @@ def monitor_image_batch(
         sensitivity_report_path: Path to sensitivity_report.json. Used to look up
                                  estimated accuracy drop for matched scenarios.
         severity_thresholds:     Dict with "medium" and "high" Wasserstein thresholds.
-                                 Defaults to DEFAULT_IMAGE_SEVERITY_THRESHOLDS.
+                                 If None, taken from drift_config.image.severity.
 
     Returns:
         Drift result dict, or None if batch is below min_batch_size.
@@ -103,7 +103,13 @@ def monitor_image_batch(
         )
         return None
 
-    thresholds = severity_thresholds or DEFAULT_IMAGE_SEVERITY_THRESHOLDS
+    if severity_thresholds is None:
+        thresholds = {
+            "medium": drift_config.image.severity.medium,
+            "high": drift_config.image.severity.high,
+        }
+    else:
+        thresholds = severity_thresholds
 
     # --- Compute drift score ---
     if method == "statistical":

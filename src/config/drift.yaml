@@ -48,6 +48,10 @@ drift:
     min_batch_size: 30
     # Notify user when severity reaches this level or higher
     alert_severity: "medium"
+    # CI gate: in non-interactive (non-TTY) runs, exit non-zero (code 2) when
+    # observed severity meets or exceeds this level. "never" disables the gate.
+    # Allowed values: low | medium | high | never
+    fail_on_severity: "high"
 
   # ==========================================================================
   # Image drift — ISP-based scenario simulation (raw DNG datasets only)
@@ -55,6 +59,16 @@ drift:
   # Ignored entirely for tabular and standard JPG/PNG image tasks.
   # ==========================================================================
   image:
+    # Severity thresholds for per-channel Wasserstein image drift scores.
+    # Defaults assume z-scored images (normalize=True in preprocessing).
+    # score < medium              → "low"
+    # medium <= score < high      → "medium"
+    # score >= high               → "high"
+    # Rule of thumb: medium ≈ 2× noise floor, high ≈ 5× noise floor.
+    severity:
+      medium: 0.10
+      high: 0.25
+
     # Drift scenarios: each defines a name, optional description, and ISP
     # parameter overrides relative to the baseline preprocessing config.
     # Only explicitly listed parameters are changed; all others keep their

@@ -36,8 +36,8 @@
 #   drift_scenarios/sensitivity_report.json  — machine-readable full report
 #   drift_scenarios/sensitivity_report.html  — human-readable summary table
 #
-# The caller (_run_image_drift_stage in steps.py) handles MLflow logging,
-# so this module has no MLflow dependency.
+# The caller (_run_isp_simulation_and_sensitivity in steps.py) handles MLflow
+# logging, so this module has no MLflow dependency.
 # =============================================================================
 
 from __future__ import annotations

@@ -38,7 +38,11 @@ from src.config.loader import load_config, load_drift_config
 from src.common.io import atomic_write_json
 from src.monitoring.drift import load_reference_for_model, monitor_batch
 from src.monitoring.reports import print_drift_summary
-from src.monitoring.drift_decision import request_drift_decision
+from src.monitoring.drift_decision import (
+    EXIT_CODE_DRIFT_GATE,
+    request_drift_decision,
+    should_trip_ci_gate,
+)
 from src.drift.interpret import _SEVERITY_ORD
 from src.data.prepare_batch import resolve_latest_version
 
@@ -208,7 +212,8 @@ def main() -> None:
     # --- Decision gate ---
     overall_severity = drift_result["overall"]["severity"]
     alert_severity = drift_config.monitoring.alert_severity
-    if sys.stdin.isatty() and (
+    is_interactive = sys.stdin.isatty()
+    if is_interactive and (
         _SEVERITY_ORD.get(overall_severity, 0) >= _SEVERITY_ORD.get(alert_severity, 0)
     ):
         decision = request_drift_decision(
@@ -220,6 +225,18 @@ def main() -> None:
             decision_path = output_dir / f"{timestamp}_decision.json"
             atomic_write_json(decision_path, decision.to_dict())
             logger.info("Drift decision written to %s", decision_path)
+
+    # --- CI exit-code gate (non-interactive only) ---
+    # Interactive runs surface severity via the decision prompt above; in
+    # non-TTY (scheduled / CI) runs we instead trip a non-zero exit when
+    # observed severity meets or exceeds fail_on_severity.
+    fail_on = drift_config.monitoring.fail_on_severity
+    if should_trip_ci_gate(overall_severity, fail_on, is_interactive):
+        logger.error(
+            "Drift gate tripped: severity=%s >= fail_on_severity=%s (exit %d)",
+            overall_severity, fail_on, EXIT_CODE_DRIFT_GATE,
+        )
+        sys.exit(EXIT_CODE_DRIFT_GATE)
 
     sys.exit(0)
 

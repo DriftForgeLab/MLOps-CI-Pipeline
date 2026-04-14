@@ -11,8 +11,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
+
+_DRIFT_STALE_AGE_DAYS = 7
 
 
 @dataclass
@@ -108,14 +111,26 @@ def _print_summary(report: dict, drift: dict | None = None) -> None:
                 else:
                     print(f"    {metric_name:<20} {'N/A':<10}  ({verdict})")
 
-    if drift is not None:
-        _print_drift_block(drift)
+    _print_drift_block(drift)
 
     print("\n" + "=" * 60)
 
 
-def _print_drift_block(drift: dict) -> None:
-    """Render the drift status block inside the promotion summary."""
+def _print_drift_block(drift: dict | None) -> None:
+    """Render the drift status block inside the promotion summary.
+
+    When ``drift`` is ``None`` a "no drift data" banner is rendered instead —
+    explicit > silent, so reviewers can see the governance gap.
+    """
+    print("\n" + "-" * 60)
+    print("  DRIFT STATUS")
+    print("-" * 60)
+
+    if drift is None:
+        print("  No drift data available for this model.")
+        print("  Run monitor-drift against a production batch to populate history.")
+        return
+
     overall = drift.get("overall", {})
     features = drift.get("features", {})
 
@@ -129,12 +144,33 @@ def _print_drift_block(drift: dict) -> None:
         if data.get("drift_detected")
     ]
 
-    print("\n" + "-" * 60)
-    print("  DRIFT STATUS")
-    print("-" * 60)
     print(f"  Dataset drift detected:   {dataset_drift}")
     print(f"  Overall severity:         {severity.upper()}")
     if drifted_names:
         print(f"  Drifted features ({drifted_count}/{total_count}):   {', '.join(drifted_names)}")
     else:
         print(f"  Drifted features ({drifted_count}/{total_count}):   none")
+
+    generated_at = drift.get("generated_at")
+    if generated_at:
+        age_line = _format_drift_age(generated_at)
+        if age_line is not None:
+            print(age_line)
+
+
+def _format_drift_age(generated_at: str) -> str | None:
+    """Return a line reporting the age of the drift report, or ``None`` on parse failure."""
+    try:
+        ts = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    age = datetime.now(timezone.utc) - ts
+    days = age.days
+    if days >= _DRIFT_STALE_AGE_DAYS:
+        return f"  Report age:               {days} days (STALE — older than {_DRIFT_STALE_AGE_DAYS} days)"
+    if days >= 1:
+        return f"  Report age:               {days} days"
+    hours = age.total_seconds() / 3600
+    return f"  Report age:               {hours:.1f} hours"

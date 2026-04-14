@@ -1,55 +1,80 @@
 # Drift Detection
 
-How tabular data drift is detected, reported, and acted on in the pipeline.
+How tabular and image drift are detected, reported, and (today) acted on in this
+project.
 
-## Overview
+## Architectural Position
 
-The drift system compares a **current** dataset (validation split during training,
-or a new batch during monitoring) against a **reference** dataset (the training
-split) to detect statistical distribution shifts. It uses
-[Evidently](https://docs.evidentlyai.com/) under the hood and produces a
-standard result schema that feeds into reporting, MLflow logging, and the
-promotion gate.
+**Drift detection is intentionally external to the training pipeline.** A
+training run produces a model + reference artifacts (the train split, feature
+map, image statistics). Drift is computed afterwards, by separate CLIs run on
+new batches, against those reference artifacts.
 
 ```
-reference (train.csv)  ──┐
-                         ├──▶  Evidently  ──▶  severity classification  ──▶  action
-current   (val / batch) ─┘
+training pipeline ──▶ model + reference artifacts ──┐
+                                                    ▼
+                                       monitor CLI on new batch ──▶ drift report
 ```
 
-## Architecture
+The pipeline does **not** run a drift stage. 
+## Current Capability vs. Known Gaps
+
+What works today:
+
+- `monitor-drift` (tabular) and `monitor-drift-image` (image) compute drift
+  against per-model reference data and write a timestamped JSON report.
+- Per-feature and overall severity classification (config-driven for tabular).
+- Optional interactive decision prompt when run in a TTY.
+
+Known gaps (tracked in `plans/rippling-sparking-sutherland.md`):
+
+- Promotion does not read the latest drift result; the approval summary's
+  drift block is wired but always receives `drift=None`.
+- High severity in non-interactive (CI/cron) mode produces only a JSON file —
+  no exit code, no MLflow write-back, no alert.
+- Image severity thresholds are hard-coded in `src/drift/image_compute.py`
+  rather than in `drift.yaml`.
+- Drift history is a directory of timestamped JSON files; no index, no
+  MLflow trend.
+
+These gaps are scheduled for closure in subsequent phases of the linked plan.
+
+## Source Layout
 
 ```
 src/
 ├── config/
 │   ├── schema.py            # DriftConfig + sub-dataclasses
-│   ├── drift.yaml           # Default drift thresholds
+│   ├── drift.yaml           # Default thresholds + monitoring knobs
 │   └── drift_loader.py      # load_drift_config()
 ├── drift/
 │   ├── alignment.py         # Reference loading + schema validation
-│   ├── compute.py           # Evidently wrapper + result extraction
+│   ├── compute.py           # Evidently wrapper for tabular drift
+│   ├── image_compute.py     # Image statistical / embedding drift
 │   └── interpret.py         # Severity classification + result assembly
-├── evaluation/
-│   └── drift_tests.py       # Pipeline orchestration (train vs val)
 ├── monitoring/
-│   ├── drift.py             # Batch monitoring entry point
-│   ├── monitor_cli.py       # `monitor-drift` CLI command
-│   └── reports.py           # Print, save JSON/HTML reports
+│   ├── drift.py             # monitor_batch() — tabular entry point
+│   ├── monitor_cli.py       # `monitor-drift` CLI
+│   ├── image_drift_monitor.py  # monitor_image_batch()
+│   ├── image_monitor_cli.py # `monitor-drift-image` CLI
+│   ├── drift_decision.py    # Interactive decision prompt
+│   └── reports.py           # JSON / HTML writers
 ├── pipeline/
-│   ├── steps.py             # _drift_stage() + drift blocking in _promotion_stage()
-│   └── mlflow_logger.py     # log_drift_metrics_to_mlflow()
+│   └── mlflow_logger.py     # log_drift_metrics_to_mlflow() — usable from
+│                            # within a pipeline run only
 └── promotion/
-    └── approval.py          # Drift info in approval summary
+    └── approval.py          # Drift block in approval summary (currently
+                             # always None — see gaps above)
 ```
 
-## Configuration
+## Tabular Drift Configuration
 
-All drift settings live in `src/config/drift.yaml`:
+All tabular settings live in `src/config/drift.yaml`:
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `enabled` | `true` | Master switch for drift analysis |
-| `reference_source` | `"train"` | Which split to use as reference baseline |
+| `enabled` | `true` | Master switch (currently only consulted by monitor CLIs) |
+| `reference_source` | `"train"` | Which split is the reference baseline |
 | `stattest.numerical` | `"ks"` | Statistical test for numerical features |
 | `stattest.categorical` | `"chisquare"` | Statistical test for categorical features |
 | `stattest_threshold.numerical` | `0.05` | P-value threshold for numerical features |
@@ -65,12 +90,6 @@ All drift settings live in `src/config/drift.yaml`:
 
 Available statistical tests: `ks`, `chisquare`, `psi`, `wasserstein`, `jensenshannon`.
 
-Promotion blocking is configured separately in `src/config/promotion.yaml`:
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `drift_block_severity` | `"high"` | Block promotion when overall severity is at or above this |
-
 ## Severity Classification
 
 ### Overall (dataset-level)
@@ -83,7 +102,7 @@ Based on `drift_share` = drifted features / total features:
 | drift_share <= `severity.medium_max` (0.50) | **medium** |
 | drift_share > `severity.medium_max` | **high** |
 
-### Per-feature
+### Per-feature (tabular)
 
 Based on the p-value from the statistical test:
 
@@ -94,56 +113,23 @@ Based on the p-value from the statistical test:
 | p-value < `feature_severity.medium_below` (0.01) | **medium** |
 | Otherwise | **low** |
 
-## Pipeline Integration
+### Image severity (today)
 
-The drift stage runs after evaluation and before promotion:
+Image overall severity uses **hard-coded** defaults from
+`src/drift/image_compute.py`:
 
+```python
+DEFAULT_IMAGE_SEVERITY_THRESHOLDS = {"medium": 0.10, "high": 0.25}
 ```
-preprocessing → training → evaluation → drift → promotion → deployment
-```
 
-### What the drift stage does
+Per-channel Wasserstein distances are aggregated; overall score above 0.25 is
+"high", above 0.10 is "medium", else "low". Making these configurable in
+`drift.yaml` is scheduled (Phase 2 of the drift plan).
 
-1. Loads the reference dataset (train split) and feature map
-2. Loads the current dataset (validation split)
-3. Validates feature alignment (schema compatibility)
-4. Runs Evidently `DataDriftPreset` with configured stat tests
-5. Classifies overall and per-feature severity
-6. Saves `drift_report.json` and `drift_report.html` to `data/drift_scenarios/`
-7. Logs drift metrics and tags to MLflow
-8. Writes `drift_result.json` to `outputs/` for the promotion stage
+## Tabular Batch Monitoring
 
-### Promotion gate
-
-The promotion stage reads `outputs/drift_result.json` and checks the overall
-severity against `drift_block_severity`. If severity is at or above the
-threshold, a `DRIFT_SEVERITY` violation is added, which blocks promotion
-unless the user explicitly overrides it in the approval gate.
-
-The approval summary displays drift status including whether dataset drift was
-detected, the overall severity, and which features drifted.
-
-### MLflow tracking
-
-The drift stage logs the following to the active MLflow run:
-
-**Metrics** (one per feature):
-- `drift.<feature_name>.score` — the p-value from the statistical test
-
-**Tags:**
-- `drift.overall_severity` — low / medium / high
-- `drift.dataset_drift_detected` — true / false
-- `drift.drifted_feature_count` — integer count
-- `drift.drift_share` — float (0.0 - 1.0)
-
-**Artifacts** (best-effort):
-- `drift_report.html` — Evidently interactive dashboard
-- `drift_report.json` — standard drift result
-
-## Offline Batch Monitoring
-
-The `monitor-drift` CLI command runs drift analysis on a new data batch against
-a model's reference data, outside of the training pipeline.
+The `monitor-drift` CLI runs drift analysis on a new data batch against a
+model's reference data.
 
 ### Usage
 
@@ -170,19 +156,39 @@ monitor-drift \
 
 ### Behavior
 
-1. Loads pipeline and drift configs
-2. Loads and validates the batch CSV
-3. Loads the reference data for the specified model/dataset
-4. Runs `monitor_batch()` — same drift engine as the pipeline stage
-5. If the batch is below `min_batch_size`, exits cleanly with no output
-6. Prints a drift summary to stdout
-7. Saves results as a timestamped JSON file: `<output-dir>/<YYYYMMDDTHHMMSSZ>.json`
-8. Logs a warning if overall severity reaches `alert_severity` or above
+1. Loads pipeline and drift configs.
+2. Loads and validates the batch CSV.
+3. Loads the reference data for the specified model/dataset.
+4. Runs `monitor_batch()` — Evidently `DataDriftPreset` with configured stat tests.
+5. If the batch is below `min_batch_size`, exits cleanly with no output.
+6. Prints a drift summary to stdout.
+7. Saves a timestamped JSON file: `<output-dir>/<YYYYMMDDTHHMMSSZ>.json`.
+8. Logs a warning if overall severity reaches `alert_severity` or above.
+9. In an interactive shell only, prompts for a drift decision.
+
+The CLI exits 0 regardless of severity. 
+
+## Image Batch Monitoring
+
+The `monitor-drift-image` CLI computes image drift against a per-model
+reference (channel statistics for `statistical` mode, CNN embeddings for
+`embedding` mode), and optionally matches the observed perturbation against
+ISP scenarios generated at training time.
+
+```bash
+monitor-drift-image \
+  --batch-dir data/new_batch_images/ \
+  --model-name iris_image_cnn \
+  --config src/config/pipeline_image.yaml \
+  --method statistical \
+  --drift-scenarios-dir data/drift_scenarios/
+```
+
+Same exit-code caveat as the tabular CLI.
 
 ## Drift Result Schema (v1.0.0)
 
-Every drift analysis (pipeline or monitoring) produces a JSON result with this
-structure:
+Both tabular and image monitors produce a JSON result with this shape:
 
 ```json
 {
@@ -191,7 +197,7 @@ structure:
   "generated_at": "2026-04-06T12:00:00Z",
   "pipeline_execution_id": "<version_id>",
   "dataset_version_id": "<version_id>",
-  "task_type": "classification",
+  "task_type": "unknown",
 
   "reference_dataset": {
     "source": "train",
@@ -237,8 +243,25 @@ structure:
 }
 ```
 
-## Disabling Drift
+`task_type` is currently always `"unknown"` because the monitor CLIs do not
+plumb the pipeline's task type through. Tracked as Phase 6 of the drift plan.
 
-Set `enabled: false` in `drift.yaml` to skip the drift stage entirely. The
-pipeline will log a message and continue to the promotion stage without drift
-checks.
+## ISP Sensitivity vs. Drift (Disambiguation)
+
+The training pipeline runs an offline **ISP sensitivity / augmentation
+robustness** analysis, not drift detection. These reports live under
+`data/drift_scenarios/` (legacy directory name) and are logged to MLflow under
+the `analysis.*` tag namespace via `_run_isp_simulation_and_sensitivity` in
+`src/pipeline/steps.py`. The `log_isp_scenario_artifacts()` helper in
+`src/pipeline/mlflow_logger.py` records the presence of these reports on the
+training run.
+
+These analyses tell you how *sensitive* a model is to controlled perturbations,
+not whether real incoming data has drifted. Real drift detection happens only
+in the monitor CLIs above.
+
+## Disabling Drift Monitoring
+
+Set `enabled: false` (or `monitoring.enabled: false`) in `drift.yaml` and the
+monitor CLIs will short-circuit. The training pipeline is unaffected — it
+never runs drift in the first place.

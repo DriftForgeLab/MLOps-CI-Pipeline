@@ -253,34 +253,33 @@ def log_isp_versioning_to_mlflow(metadata: dict, isp_config) -> None:
     mlflow.set_tags(tags)
 
 
-def log_drift_artifacts(drift_dir: Path) -> None:
-    """Log drift report HTML/JSON to the active MLflow run if they exist.
+def log_isp_scenario_artifacts(scenario_dir: Path) -> None:
+    """Log ISP sensitivity / scenario report HTML/JSON to the active MLflow run.
 
-    Best-effort: sets has_drift_report=false and logs a warning if absent.
-    Path.__truediv__ works on non-existent directories, so no explicit
-    drift_dir.exists() check is needed — the per-file f.exists() call handles
-    both missing directories and missing files correctly.
+    Despite the legacy directory name (`drift_scenarios`), these are offline ISP
+    perturbation reports — not runtime drift detection results. Runtime drift is
+    handled by the monitor CLIs and logged via `log_drift_metrics_to_mlflow`.
     """
     if not mlflow.active_run():
-        _logger.warning("No active MLflow run — skipping drift artifact logging.")
+        _logger.warning("No active MLflow run — skipping ISP scenario artifact logging.")
         return
     candidates = [
-        drift_dir / "drift_report.html",
-        drift_dir / "drift_report.json",
+        scenario_dir / "sensitivity_report.html",
+        scenario_dir / "sensitivity_report.json",
     ]
     found = [f for f in candidates if f.exists()]
 
     if not found:
         _logger.warning(
-            "No drift reports found at %s — skipping drift artifact logging.", drift_dir
+            "No ISP sensitivity reports found at %s — skipping artifact logging.", scenario_dir
         )
-        mlflow.set_tag("has_drift_report", "false")
+        mlflow.set_tag("has_isp_scenarios", "false")
         return
 
     for f in found:
-        mlflow.log_artifact(str(f), artifact_path="drift")
-    mlflow.set_tag("has_drift_report", "true")
-    _logger.info("Logged %d drift artifact(s) from %s", len(found), drift_dir)
+        mlflow.log_artifact(str(f), artifact_path="isp_scenarios")
+    mlflow.set_tag("has_isp_scenarios", "true")
+    _logger.info("Logged %d ISP scenario artifact(s) from %s", len(found), scenario_dir)
 
 
 def log_image_drift_metrics_to_mlflow(drift_result: dict) -> None:

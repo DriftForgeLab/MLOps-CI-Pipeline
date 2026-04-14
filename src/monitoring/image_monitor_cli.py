@@ -67,6 +67,7 @@ import numpy as np
 from src.config.loader import load_config, load_drift_config
 from src.common.io import atomic_write_json, atomic_write_npz
 from src.monitoring.image_drift_monitor import monitor_image_batch
+from src.monitoring.drift_decision import EXIT_CODE_DRIFT_GATE, should_trip_ci_gate
 from src.drift.interpret import _SEVERITY_ORD
 from src.data.prepare_batch import resolve_latest_version
 
@@ -637,6 +638,15 @@ def main() -> None:
             decision_path = output_dir / f"{timestamp}_decision.json"
             atomic_write_json(decision_path, decision.to_dict())
             logger.info("Drift decision written to %s", decision_path)
+
+    # --- CI exit-code gate (non-interactive only) ---
+    fail_on = drift_config.monitoring.fail_on_severity
+    if should_trip_ci_gate(overall_severity, fail_on, is_interactive):
+        logger.error(
+            "Drift gate tripped: severity=%s >= fail_on_severity=%s (exit %d)",
+            overall_severity, fail_on, EXIT_CODE_DRIFT_GATE,
+        )
+        sys.exit(EXIT_CODE_DRIFT_GATE)
 
     sys.exit(0)
 

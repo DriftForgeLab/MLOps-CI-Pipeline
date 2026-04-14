@@ -1,6 +1,13 @@
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
-from src.promotion.approval import ApprovalResult, request_approval, _print_summary
+from src.promotion.approval import (
+    ApprovalResult,
+    request_approval,
+    _print_summary,
+    _print_drift_block,
+)
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
@@ -189,11 +196,12 @@ class TestPrintSummary:
 class TestPrintSummaryDrift:
     """Drift-related parametrised cases for _print_summary."""
 
-    def test_drift_none_produces_no_drift_block(self, capsys):
-        """Backward compat: drift=None renders no drift section."""
+    def test_drift_none_renders_no_data_banner(self, capsys):
+        """drift=None must render an explicit 'no data' banner, not silence."""
         _print_summary(_minimal_report(), drift=None)
         output = capsys.readouterr().out
-        assert "DRIFT STATUS" not in output
+        assert "DRIFT STATUS" in output
+        assert "No drift data available" in output
 
     @pytest.mark.parametrize(
         "severity",
@@ -255,9 +263,47 @@ class TestRequestApprovalDrift:
         assert "DRIFT STATUS" in output
         assert result.approved is True
 
-    def test_no_drift_kwarg_backward_compatible(self, monkeypatch, capsys):
+    def test_no_drift_kwarg_renders_no_data_banner(self, monkeypatch, capsys):
+        """Default drift=None still shows the drift block with a 'no data' banner."""
         monkeypatch.setattr("builtins.input", lambda prompt: "1")
         result = request_approval(_minimal_report())
         output = capsys.readouterr().out
-        assert "DRIFT STATUS" not in output
+        assert "DRIFT STATUS" in output
+        assert "No drift data available" in output
         assert result.approved is True
+
+
+# ── _print_drift_block: age / staleness rendering ────────────────────────────
+
+class TestDriftBlockAge:
+    def test_drift_block_fresh_report_shows_hours(self, capsys):
+        drift = _drift_dict(severity="low")
+        drift["generated_at"] = datetime.now(timezone.utc).isoformat()
+        _print_drift_block(drift)
+        output = capsys.readouterr().out
+        assert "Report age:" in output
+        assert "hours" in output
+        assert "STALE" not in output
+
+    def test_drift_block_stale_report_flags_stale(self, capsys):
+        drift = _drift_dict(severity="medium")
+        drift["generated_at"] = (
+            datetime.now(timezone.utc) - timedelta(days=14)
+        ).isoformat()
+        _print_drift_block(drift)
+        output = capsys.readouterr().out
+        assert "14 days" in output
+        assert "STALE" in output
+
+    def test_drift_block_omits_age_when_generated_at_missing(self, capsys):
+        drift = _drift_dict(severity="low")
+        drift.pop("generated_at", None)
+        _print_drift_block(drift)
+        output = capsys.readouterr().out
+        assert "Report age:" not in output
+
+    def test_drift_block_none_shows_no_data_message(self, capsys):
+        _print_drift_block(None)
+        output = capsys.readouterr().out
+        assert "DRIFT STATUS" in output
+        assert "No drift data available" in output

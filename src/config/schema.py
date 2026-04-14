@@ -83,6 +83,7 @@ _REQUIRED_RULE_KEYS: frozenset[str] = frozenset({"id", "metric", "threshold", "o
 # ---------------------------------------------------------------------------
 
 VALID_DRIFT_SEVERITIES: frozenset[str] = frozenset({"low", "medium", "high"})
+VALID_DRIFT_FAIL_ON_SEVERITIES: frozenset[str] = frozenset({"low", "medium", "high", "never"})
 VALID_DRIFT_STATTESTS: frozenset[str] = frozenset({
     "ks", "chisquare", "psi", "wasserstein", "jensenshannon"
 })
@@ -393,6 +394,19 @@ class DriftMonitoringConfig:
     enabled: bool = True
     min_batch_size: int = 30
     alert_severity: str = "medium"
+    # Conservative default: only "high" severity trips the CI gate.
+    # Set to "never" to disable the non-interactive exit-code gate entirely.
+    fail_on_severity: str = "high"
+
+@dataclass(frozen=True)
+class DriftImageSeverityConfig:
+    # Wasserstein distance thresholds (z-scored images)
+    medium: float = 0.10
+    high: float = 0.25
+
+@dataclass(frozen=True)
+class DriftImageConfig:
+    severity: DriftImageSeverityConfig = field(default_factory=DriftImageSeverityConfig)
 
 @dataclass(frozen=True)
 class DriftConfig:
@@ -408,3 +422,4 @@ class DriftConfig:
         default_factory=DriftFeatureSeverityConfig
     )
     monitoring: DriftMonitoringConfig = field(default_factory=DriftMonitoringConfig)
+    image: DriftImageConfig = field(default_factory=DriftImageConfig)

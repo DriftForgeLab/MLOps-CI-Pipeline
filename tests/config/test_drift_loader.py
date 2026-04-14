@@ -8,6 +8,8 @@ from src.config.schema import (
     DriftSeverityConfig,
     DriftFeatureSeverityConfig,
     DriftMonitoringConfig,
+    DriftImageSeverityConfig,
+    DriftImageConfig,
 )
 
 CONFIG_DIR = Path(__file__).parent.parent.parent / "src" / "config"
@@ -46,6 +48,7 @@ def test_load_drift_config_monitoring_values():
     assert config.monitoring.enabled is True
     assert config.monitoring.min_batch_size == 30
     assert config.monitoring.alert_severity == "medium"
+    assert config.monitoring.fail_on_severity == "high"
 
 
 def test_load_drift_config_is_frozen():
@@ -112,6 +115,79 @@ def test_load_drift_config_custom_thresholds(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Image severity thresholds
+# ---------------------------------------------------------------------------
+
+def test_load_drift_config_image_severity_from_yaml():
+    config = load_drift_config(CONFIG_DIR / "drift.yaml")
+    assert config.image.severity.medium == 0.10
+    assert config.image.severity.high == 0.25
+
+
+def test_load_drift_config_image_severity_defaults_when_absent(tmp_path):
+    cfg = tmp_path / "drift.yaml"
+    cfg.write_text("drift:\n  enabled: true\n")
+    config = load_drift_config(cfg)
+    assert config.image == DriftImageConfig()
+    assert config.image.severity == DriftImageSeverityConfig()
+    assert config.image.severity.medium == 0.10
+    assert config.image.severity.high == 0.25
+
+
+def test_load_drift_config_image_severity_override(tmp_path):
+    cfg = tmp_path / "drift.yaml"
+    cfg.write_text(
+        "drift:\n"
+        "  image:\n"
+        "    severity:\n"
+        "      medium: 0.05\n"
+        "      high: 0.40\n"
+    )
+    config = load_drift_config(cfg)
+    assert config.image.severity.medium == 0.05
+    assert config.image.severity.high == 0.40
+
+
+def test_load_drift_config_image_severity_partial_override(tmp_path):
+    cfg = tmp_path / "drift.yaml"
+    cfg.write_text(
+        "drift:\n"
+        "  image:\n"
+        "    severity:\n"
+        "      medium: 0.08\n"
+    )
+    config = load_drift_config(cfg)
+    assert config.image.severity.medium == 0.08
+    assert config.image.severity.high == 0.25  # default preserved
+
+
+def test_load_drift_config_image_severity_medium_not_less_than_high(tmp_path):
+    cfg = tmp_path / "drift.yaml"
+    cfg.write_text(
+        "drift:\n"
+        "  image:\n"
+        "    severity:\n"
+        "      medium: 0.30\n"
+        "      high: 0.25\n"
+    )
+    with pytest.raises(ValueError, match="image.severity.medium"):
+        load_drift_config(cfg)
+
+
+def test_load_drift_config_image_severity_negative_rejected(tmp_path):
+    cfg = tmp_path / "drift.yaml"
+    cfg.write_text(
+        "drift:\n"
+        "  image:\n"
+        "    severity:\n"
+        "      medium: -0.05\n"
+        "      high: 0.25\n"
+    )
+    with pytest.raises(ValueError, match="image.severity.medium"):
+        load_drift_config(cfg)
+
+
+# ---------------------------------------------------------------------------
 # Validation errors
 # ---------------------------------------------------------------------------
 
@@ -155,6 +231,40 @@ def test_load_drift_config_invalid_alert_severity(tmp_path):
         "    alert_severity: extreme\n"
     )
     with pytest.raises(ValueError, match="Invalid monitoring.alert_severity"):
+        load_drift_config(cfg)
+
+
+# ---------------------------------------------------------------------------
+# fail_on_severity (CI gate)
+# ---------------------------------------------------------------------------
+
+def test_load_drift_config_fail_on_severity_default(tmp_path):
+    cfg = tmp_path / "drift.yaml"
+    cfg.write_text("drift:\n  enabled: true\n")
+    config = load_drift_config(cfg)
+    assert config.monitoring.fail_on_severity == "high"
+
+
+@pytest.mark.parametrize("level", ["low", "medium", "high", "never"])
+def test_load_drift_config_fail_on_severity_valid(tmp_path, level):
+    cfg = tmp_path / "drift.yaml"
+    cfg.write_text(
+        "drift:\n"
+        "  monitoring:\n"
+        f"    fail_on_severity: {level}\n"
+    )
+    config = load_drift_config(cfg)
+    assert config.monitoring.fail_on_severity == level
+
+
+def test_load_drift_config_invalid_fail_on_severity(tmp_path):
+    cfg = tmp_path / "drift.yaml"
+    cfg.write_text(
+        "drift:\n"
+        "  monitoring:\n"
+        "    fail_on_severity: always\n"
+    )
+    with pytest.raises(ValueError, match="Invalid monitoring.fail_on_severity"):
         load_drift_config(cfg)
 
 

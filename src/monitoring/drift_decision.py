@@ -36,6 +36,45 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Exit-code contract
+# ---------------------------------------------------------------------------
+# Monitor CLIs (monitor-drift, monitor-drift-image) reserve distinct exit codes
+# so downstream schedulers can tell "hard error" apart from "drift gate tripped":
+#
+#   0  — success (no drift or severity below fail_on_severity, or interactive run)
+#   1  — hard error (bad config, missing input, unhandled exception)
+#   2  — drift gate tripped (non-interactive run with severity >= fail_on_severity)
+#
+# Gate only fires when sys.stdin.isatty() is False, so local TTY runs are never
+# CI-broken by this; instead they surface via request_drift_decision() above.
+EXIT_CODE_DRIFT_GATE: int = 2
+
+
+def should_trip_ci_gate(
+    overall_severity: str,
+    fail_on_severity: str,
+    is_interactive: bool,
+) -> bool:
+    """Return True when the non-interactive CI gate should fail the run.
+
+    The gate fires only in non-interactive (non-TTY) contexts. When the
+    ``fail_on_severity`` setting is ``"never"``, the gate is disabled. Any
+    unrecognised severity is treated as a missing signal and does not trip
+    the gate.
+    """
+    if is_interactive:
+        return False
+    if fail_on_severity == "never":
+        return False
+    from src.drift.interpret import _SEVERITY_ORD
+    observed = _SEVERITY_ORD.get(overall_severity)
+    threshold = _SEVERITY_ORD.get(fail_on_severity)
+    if observed is None or threshold is None:
+        return False
+    return observed >= threshold
+
+
+# ---------------------------------------------------------------------------
 # Options
 # ---------------------------------------------------------------------------
 

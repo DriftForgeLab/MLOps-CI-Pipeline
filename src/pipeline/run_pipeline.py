@@ -23,7 +23,7 @@ from pathlib import Path
 from src.config.loader import load_config
 from src.pipeline.steps import execute_stage, StageResult
 from src.pipeline.report import compute_config_hash, build_run_report, write_run_report
-from src.pipeline.mlflow_logger import configure_mlflow, log_drift_artifacts
+from src.pipeline.mlflow_logger import configure_mlflow, log_isp_scenario_artifacts
 from src.data.create_dataset_yaml import detect_and_generate
 from src.data.versioning import create_dataset_version
 from src.data.validate import validate_dataset
@@ -115,7 +115,7 @@ def main() -> None:
 
         if mlflow.active_run():
             mlflow.log_artifact(str(config_path), artifact_path="config")
-            log_drift_artifacts(Path(config.data.drift_scenarios))
+            log_isp_scenario_artifacts(Path(config.data.drift_scenarios))
 
         mlflow_run_id = mlflow.active_run().info.run_id if mlflow.active_run() else None
 

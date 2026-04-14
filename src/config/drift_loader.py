@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from src.config.schema import (
+    VALID_DRIFT_FAIL_ON_SEVERITIES,
     VALID_DRIFT_SEVERITIES,
     VALID_DRIFT_STATTESTS,
     VALID_REFERENCE_SOURCES,
@@ -11,6 +12,8 @@ from src.config.schema import (
     DriftSeverityConfig,
     DriftFeatureSeverityConfig,
     DriftMonitoringConfig,
+    DriftImageSeverityConfig,
+    DriftImageConfig,
     DriftConfig,
 )
 from src.config.validation import _load_yaml
@@ -45,6 +48,31 @@ def load_drift_config(path: Path) -> DriftConfig:
     if alert_sev not in VALID_DRIFT_SEVERITIES:
         errors.append(f"Invalid monitoring.alert_severity: '{alert_sev}'")
 
+    fail_on_sev = monitoring_cfg.get("fail_on_severity", "high")
+    if fail_on_sev not in VALID_DRIFT_FAIL_ON_SEVERITIES:
+        errors.append(
+            f"Invalid monitoring.fail_on_severity: '{fail_on_sev}' "
+            f"(expected one of {sorted(VALID_DRIFT_FAIL_ON_SEVERITIES)})"
+        )
+
+    # Validate image severity thresholds (medium < high, both > 0)
+    image_cfg = drift.get("image", {}) or {}
+    image_sev_cfg = image_cfg.get("severity", {}) or {}
+    image_med = image_sev_cfg.get("medium", DriftImageSeverityConfig.medium)
+    image_high = image_sev_cfg.get("high", DriftImageSeverityConfig.high)
+    if not (isinstance(image_med, (int, float)) and image_med > 0):
+        errors.append(f"image.severity.medium must be a positive number, got {image_med!r}")
+    if not (isinstance(image_high, (int, float)) and image_high > 0):
+        errors.append(f"image.severity.high must be a positive number, got {image_high!r}")
+    if (
+        isinstance(image_med, (int, float))
+        and isinstance(image_high, (int, float))
+        and image_med >= image_high
+    ):
+        errors.append(
+            f"image.severity.medium ({image_med}) must be less than image.severity.high ({image_high})"
+        )
+
     if errors:
         raise ValueError(
             "Drift config validation failed:\n  - " + "\n  - ".join(errors)
@@ -64,4 +92,7 @@ def load_drift_config(path: Path) -> DriftConfig:
             **drift.get("feature_severity", {})
         ),
         monitoring=DriftMonitoringConfig(**drift.get("monitoring", {})),
+        image=DriftImageConfig(
+            severity=DriftImageSeverityConfig(**image_sev_cfg),
+        ),
     )

@@ -40,7 +40,8 @@ from src.pipeline.mlflow_logger import (
 
 from src.promotion.rules import run_promotion_rules
 from src.promotion.approval import request_approval
-from src.registry.model_registry import PROMOTION_ARTIFACT_SUBDIR
+from src.monitoring.history import DEFAULT_OUTPUTS_ROOT, load_latest_drift
+from src.registry.model_registry import PROMOTION_ARTIFACT_SUBDIR, resolve_model_name
 import json
 import mlflow
 
@@ -306,6 +307,22 @@ def _run_augmentation_robustness(
         mlflow.log_artifact(str(html_path), artifact_path="model_analysis")
 
 
+def _drift_provenance(drift: dict | None, model_name: str) -> dict:
+    """Summarise the drift read-back for the promotion decision record."""
+    if drift is None:
+        return {"available": False, "model_name": model_name}
+    overall = drift.get("overall", {})
+    return {
+        "available": True,
+        "model_name": model_name,
+        "generated_at": drift.get("generated_at"),
+        "severity": overall.get("severity"),
+        "dataset_drift_detected": overall.get("dataset_drift_detected"),
+        "drifted_feature_count": overall.get("drifted_feature_count"),
+        "total_feature_count": overall.get("total_feature_count"),
+    }
+
+
 def _promotion_stage(config: PipelineConfig, version_id: str) -> None:
     # Load evaluation report
     report_path = Path(config.output_dir) / "evaluation_report.json"
@@ -342,7 +359,22 @@ def _promotion_stage(config: PipelineConfig, version_id: str) -> None:
 
     logger.info("  All promotion rules passed — candidate is eligible for promotion.")
 
-    result = request_approval(report, drift=None)
+    model_name = resolve_model_name(config)
+    try:
+        drift = load_latest_drift(model_name, DEFAULT_OUTPUTS_ROOT)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Failed to load latest drift for %s: %s", model_name, exc)
+        drift = None
+    if drift is None:
+        logger.info("  No drift history found for model '%s'.", model_name)
+    else:
+        logger.info(
+            "  Loaded latest drift for '%s': severity=%s",
+            model_name,
+            drift.get("overall", {}).get("severity", "unknown"),
+        )
+
+    result = request_approval(report, drift=drift)
 
     mlflow_run_id = mlflow.active_run().info.run_id if mlflow.active_run() else None
     decision = {
@@ -352,6 +384,7 @@ def _promotion_stage(config: PipelineConfig, version_id: str) -> None:
         "dataset_version_id": version_id,
         "metrics":            report.get("metrics", {}),
         "comparison":         report.get("comparison", {}),
+        "drift":              _drift_provenance(drift, model_name),
     }
 
     decision_path = Path(config.output_dir) / "promotion_decision.json"
