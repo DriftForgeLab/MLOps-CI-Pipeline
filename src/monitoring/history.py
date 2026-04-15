@@ -63,7 +63,7 @@ def append_history_entry(
         "drift_share": overall.get("drift_share"),
         "drifted_feature_count": overall.get("drifted_feature_count"),
         "drift_score": overall.get("drift_score"),
-        "json_path": str(json_path),
+        "json_path": str(Path(json_path).resolve()),
         "mlflow_run_id": mlflow_run_id,
     }
 

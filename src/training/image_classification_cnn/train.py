@@ -86,16 +86,73 @@ class SimpleCNN(nn.Module):
             return output.argmax(dim=1).numpy()
 
 
-def run_training(config: PipelineConfig, version_id: str) -> TrainingResult:
+def _load_production_weights(config: PipelineConfig, model: "SimpleCNN") -> bool:
+    """Load Production model weights into model in-place.
+
+    Fetches the latest Production version from the MLflow Model Registry,
+    downloads model.pt, and loads the state_dict. Returns True on success,
+    False if no Production model exists or loading fails.
+
+    Args:
+        config: PipelineConfig (used to resolve registry model name and tracking URI).
+        model:  SimpleCNN instance to load weights into. Must match the
+                architecture of the registered model.
     """
-    Train a CNN on preprocessed image data (NPZ with 4D arrays).
+    try:
+        from src.registry.model_registry import get_mlflow_client, resolve_model_name
+        import mlflow
+        client = get_mlflow_client(config)
+        model_name = resolve_model_name(config)
+        versions = client.get_latest_versions(model_name, stages=["Production"])
+        if not versions:
+            logger.warning(
+                "  Fine-tune: no Production model found for '%s' — training from scratch.", model_name
+            )
+            return False
+        prod_version = versions[0]
+        run_id = prod_version.run_id
+        artifact_uri = mlflow.get_artifact_uri()  # base; we use download below
+        local_path = mlflow.artifacts.download_artifacts(
+            run_id=run_id,
+            artifact_path="model/model.pt",
+        )
+        # weights_only=False because model.pt is saved as a full model object
+        # (torch.save(model)) by metadata.py — not as a state_dict.
+        # The artifact comes from our own MLflow Registry, so the source is trusted.
+        loaded = torch.load(local_path, map_location="cpu", weights_only=False)
+        if isinstance(loaded, dict):
+            model.load_state_dict(loaded)
+        else:
+            model.load_state_dict(loaded.state_dict())
+        logger.info(
+            "  Fine-tune: loaded Production weights from '%s' version %s (run_id=%s)",
+            model_name, prod_version.version, run_id,
+        )
+        return True
+    except Exception as e:
+        logger.warning(
+            "  Fine-tune: failed to load Production weights (%s) — training from scratch.", e
+        )
+        return False
+
+
+def run_training(config: PipelineConfig, version_id: str, fine_tune: bool = False) -> TrainingResult:
+    """Train a CNN on preprocessed image data (NPZ with 4D arrays).
 
     Expects preprocessing with flatten=false, producing arrays of shape
     (N, H, W, C) which are transposed to (N, C, H, W) for PyTorch.
 
+    When ``fine_tune=True``, the existing Production model weights are loaded
+    before training begins. Training then continues with the fine-tune
+    hyperparameters (fewer epochs, lower learning rate) defined in
+    ``training_image_cnn.yaml`` under the ``fine_tune:`` block. If no
+    Production model exists, a warning is logged and training proceeds from
+    scratch with the standard hyperparameters.
+
     Args:
         config:     Validated PipelineConfig
         version_id: Dataset version ID
+        fine_tune:  If True, load Production weights and use fine-tune hyperparams.
 
     Returns:
         TrainingResult with fitted CNN model and training metadata.
@@ -167,11 +224,40 @@ def run_training(config: PipelineConfig, version_id: str) -> TrainingResult:
     loader = DataLoader(dataset, batch_size=hp.batch_size, shuffle=True, generator=shuffle_gen)
 
     model = SimpleCNN(num_classes, in_channels, image_height, image_width, arch)
-    optimizer = torch.optim.Adam(model.parameters(), lr=hp.learning_rate)
+
+    # --- Fine-tuning: load Production weights if requested ---
+    ft_cfg = training_config.fine_tune
+    weights_loaded = False
+    if fine_tune:
+        weights_loaded = _load_production_weights(config, model)
+        if weights_loaded and ft_cfg.freeze_backbone:
+            # Freeze all layers except the final Linear classifier
+            for name, param in model.net.named_parameters():
+                param.requires_grad = False
+            # Unfreeze only the last Linear layer
+            last_linear = [m for m in model.net.modules() if isinstance(m, nn.Linear)][-1]
+            for param in last_linear.parameters():
+                param.requires_grad = True
+            logger.info("  Fine-tune: backbone frozen — training classifier head only.")
+
+    # Choose hyperparams: fine-tune overrides when weights loaded successfully
+    if fine_tune and weights_loaded:
+        epochs = ft_cfg.epochs
+        learning_rate = ft_cfg.learning_rate
+        logger.info(
+            "  Fine-tune mode: epochs=%d  lr=%g  freeze_backbone=%s",
+            epochs, learning_rate, ft_cfg.freeze_backbone,
+        )
+    else:
+        epochs = hp.epochs
+        learning_rate = hp.learning_rate
+
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    optimizer = torch.optim.Adam(trainable_params, lr=learning_rate)
     criterion = nn.CrossEntropyLoss()
 
     model.train()
-    for epoch in range(hp.epochs):
+    for epoch in range(epochs):
         total_loss = 0.0
         for X_batch, y_batch in loader:
             optimizer.zero_grad()
@@ -181,7 +267,7 @@ def run_training(config: PipelineConfig, version_id: str) -> TrainingResult:
             optimizer.step()
             total_loss += loss.item()
         avg_loss = total_loss / len(loader)
-        logger.info("  Epoch %d/%d — loss: %.4f", epoch + 1, hp.epochs, avg_loss)
+        logger.info("  Epoch %d/%d — loss: %.4f", epoch + 1, epochs, avg_loss)
 
     logger.info(
         "  CNN training complete: %d classes, %d samples",
@@ -189,6 +275,9 @@ def run_training(config: PipelineConfig, version_id: str) -> TrainingResult:
     )
 
     hyperparameters = dict(vars(hp))
+    hyperparameters["fine_tuned"] = fine_tune and weights_loaded
+    hyperparameters["fine_tune_epochs"] = epochs if (fine_tune and weights_loaded) else None
+    hyperparameters["fine_tune_lr"] = learning_rate if (fine_tune and weights_loaded) else None
     hyperparameters["conv_layers"] = [
         {"out_channels": c.out_channels, "kernel_size": c.kernel_size}
         for c in arch.conv_layers

@@ -15,3 +15,14 @@ model:
     epochs: 10                # number of full passes over the training set
     batch_size: 32            # images per gradient update
     learning_rate: 0.001      # Adam optimizer learning rate
+
+# Fine-tuning settings — used when run-pipeline is invoked with --fine-tune.
+# Instead of training from scratch, the existing Production model weights are
+# loaded and training continues with fewer epochs and a lower learning rate.
+# This is useful after drift is detected to adapt the model to the new
+# data distribution without discarding previously learned features.
+fine_tune:
+  enabled: false              # overridden at runtime by --fine-tune flag
+  epochs: 5                   # fewer epochs than full training
+  learning_rate: 0.0001       # lower LR to avoid overwriting learned features
+  freeze_backbone: false      # if true, only the classifier head is trained

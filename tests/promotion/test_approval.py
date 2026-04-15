@@ -194,82 +194,44 @@ class TestPrintSummary:
 # ── _print_summary: drift block ──────────────────────────────────────────────
 
 class TestPrintSummaryDrift:
-    """Drift-related parametrised cases for _print_summary."""
+    """Verify drift block is no longer shown in the promotion summary.
 
-    def test_drift_none_renders_no_data_banner(self, capsys):
-        """drift=None must render an explicit 'no data' banner, not silence."""
+    Drift status was removed from the promotion summary because it reflects
+    pre-training state and is misleading after fine-tuning. The internal
+    _print_drift_block helper still exists for standalone use.
+    """
+
+    def test_drift_not_shown_in_summary(self, capsys):
+        """Promotion summary must not contain a DRIFT STATUS block."""
+        _print_summary(_minimal_report(), drift=_drift_dict())
+        output = capsys.readouterr().out
+        assert "DRIFT STATUS" not in output
+
+    def test_drift_none_not_shown_in_summary(self, capsys):
+        """drift=None must also produce no DRIFT STATUS block in the summary."""
         _print_summary(_minimal_report(), drift=None)
         output = capsys.readouterr().out
-        assert "DRIFT STATUS" in output
-        assert "No drift data available" in output
-
-    @pytest.mark.parametrize(
-        "severity",
-        ["low", "medium"],
-    )
-    def test_drift_block_renders_severity(self, severity, capsys):
-        drift = _drift_dict(severity=severity)
-        _print_summary(_minimal_report(), drift=drift)
-        output = capsys.readouterr().out
-        assert "DRIFT STATUS" in output
-        assert f"Overall severity:         {severity.upper()}" in output
-
-    def test_drift_block_renders_dataset_drift_detected(self, capsys):
-        drift = _drift_dict(dataset_drift_detected=True)
-        _print_summary(_minimal_report(), drift=drift)
-        output = capsys.readouterr().out
-        assert "Dataset drift detected:   True" in output
-
-    def test_drift_block_renders_drifted_feature_names(self, capsys):
-        drift = _drift_dict()
-        _print_summary(_minimal_report(), drift=drift)
-        output = capsys.readouterr().out
-        assert "Drifted features (2/4):" in output
-        assert "sepal_length" in output
-        assert "petal_length" in output
-
-    def test_drift_block_no_drifted_features(self, capsys):
-        features = {
-            "f1": {
-                "column_type": "num",
-                "drift_detected": False,
-                "drift_score": 0.5,
-                "stattest_name": "ks",
-                "stattest_threshold": 0.05,
-                "severity": "low",
-            },
-        }
-        drift = _drift_dict(
-            dataset_drift_detected=False,
-            severity="low",
-            drifted_feature_count=0,
-            total_feature_count=1,
-            features=features,
-        )
-        _print_summary(_minimal_report(), drift=drift)
-        output = capsys.readouterr().out
-        assert "Drifted features (0/1):   none" in output
-        assert "Dataset drift detected:   False" in output
+        assert "DRIFT STATUS" not in output
 
 
-# ── request_approval: drift kwarg forwarding ──────────────────────────────────
+# ── request_approval: drift kwarg no longer shown in summary ─────────────────
 
 class TestRequestApprovalDrift:
-    def test_drift_kwarg_renders_drift_block(self, monkeypatch, capsys):
+    def test_drift_kwarg_not_shown_in_summary(self, monkeypatch, capsys):
+        """Passing drift= to request_approval must not render a DRIFT STATUS block."""
         monkeypatch.setattr("builtins.input", lambda prompt: "1")
         drift = _drift_dict(severity="low")
         result = request_approval(_minimal_report(), drift=drift)
         output = capsys.readouterr().out
-        assert "DRIFT STATUS" in output
+        assert "DRIFT STATUS" not in output
         assert result.approved is True
 
-    def test_no_drift_kwarg_renders_no_data_banner(self, monkeypatch, capsys):
-        """Default drift=None still shows the drift block with a 'no data' banner."""
+    def test_no_drift_kwarg_no_drift_block(self, monkeypatch, capsys):
+        """Default drift=None produces no drift block."""
         monkeypatch.setattr("builtins.input", lambda prompt: "1")
         result = request_approval(_minimal_report())
         output = capsys.readouterr().out
-        assert "DRIFT STATUS" in output
-        assert "No drift data available" in output
+        assert "DRIFT STATUS" not in output
         assert result.approved is True
 
 

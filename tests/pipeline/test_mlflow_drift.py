@@ -69,10 +69,10 @@ def test_logs_isp_scenario_files_when_present(tmp_path):
     with mlflow.start_run() as run:
         log_isp_scenario_artifacts(scenario_dir)
     data = mlflow.get_run(run.info.run_id).data
-    assert data.tags["has_isp_scenarios"] == "true"
+    assert data.tags["has_model_analysis"] == "true"
     client = mlflow.tracking.MlflowClient()
     top = [a.path for a in client.list_artifacts(run.info.run_id)]
-    assert "isp_scenarios" in top, f"Expected 'isp_scenarios' dir in artifacts, got {top}"
+    assert "model_analysis" in top, f"Expected 'model_analysis' dir in artifacts, got {top}"
 
 
 def test_noop_when_scenario_directory_absent(tmp_path):
@@ -83,7 +83,7 @@ def test_noop_when_scenario_directory_absent(tmp_path):
     with mlflow.start_run() as run:
         log_isp_scenario_artifacts(scenario_dir)   # must not raise
     data = mlflow.get_run(run.info.run_id).data
-    assert data.tags.get("has_isp_scenarios") == "false"
+    assert data.tags.get("has_model_analysis") == "false"
 
 
 def test_noop_when_scenario_files_absent(tmp_path):
@@ -95,7 +95,7 @@ def test_noop_when_scenario_files_absent(tmp_path):
     with mlflow.start_run() as run:
         log_isp_scenario_artifacts(scenario_dir)
     data = mlflow.get_run(run.info.run_id).data
-    assert data.tags.get("has_isp_scenarios") == "false"
+    assert data.tags.get("has_model_analysis") == "false"
 
 
 # ---------------------------------------------------------------------------

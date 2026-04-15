@@ -30,6 +30,8 @@ def _write_minimal_config(tmp_path: Path, mlflow_block: str = "") -> Path:
     )
     if mlflow_block:
         content += mlflow_block + "\n"
+    else:
+        content += "mlflow:\n  tracking_uri: null\n  experiment_name: null\n"
     cfg.write_text(content)
     return cfg
 

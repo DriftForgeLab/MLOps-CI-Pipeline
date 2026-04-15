@@ -97,14 +97,18 @@ def _preprocessing_stage(config: PipelineConfig, version_id: str) -> None:
                 log_isp_versioning_to_mlflow(meta, prep_config.image.isp)
 
 
-def _training_stage(config: PipelineConfig, version_id: str) -> None:
+def _training_stage(config: PipelineConfig, version_id: str, fine_tune: bool = False) -> None:
     if config.task_type == "classification":
+        if fine_tune:
+            logger.info("  --fine-tune has no effect for task_type='classification' (random forest has no weights) — training from scratch.")
         result = run_classification_training(config, version_id)
     elif config.task_type == "regression":
+        if fine_tune:
+            logger.info("  --fine-tune has no effect for task_type='regression' (random forest has no weights) — training from scratch.")
         result = run_regression_training(config, version_id)
     elif config.task_type == "image_classification_cnn":
         from src.training.image_classification_cnn.train import run_training as run_cnn_training
-        result = run_cnn_training(config, version_id)
+        result = run_cnn_training(config, version_id, fine_tune=fine_tune)
     else:
         raise ValueError(f"Unsupported task_type: '{config.task_type}'")
 
@@ -475,21 +479,29 @@ _STAGE_REGISTRY: dict[str, Callable] = {
 }
 
 
-def execute_stage(stage_name: str, config: PipelineConfig, version_id: str) -> StageResult:
-    """
-    Execute a single pipeline stage with START/END markers and timing.
-    
+def execute_stage(
+    stage_name: str,
+    config: PipelineConfig,
+    version_id: str,
+    fine_tune: bool = False,
+) -> StageResult:
+    """Execute a single pipeline stage with START/END markers and timing.
+
     Looks up the stage function in _STAGE_REGISTRY, calls it with config,
     and wraps the call in structured logging and timing. Exceptions are
     caught and recorded — the END marker is always logged.
-    
+
     Args:
         stage_name: Must be a key in _STAGE_REGISTRY (e.g. "training")
         config:     Validated, immutable PipelineConfig
-        
+        version_id: Dataset version identifier for this run.
+        fine_tune:  If True, the training stage loads existing Production model
+                    weights and continues training with fine-tune hyperparameters
+                    instead of training from scratch. Ignored for non-CNN tasks.
+
     Returns:
         StageResult capturing timing, status, and optional error info.
-        
+
     Raises:
         KeyError: If stage_name is not found in _STAGE_REGISTRY.
     """
@@ -504,7 +516,10 @@ def execute_stage(stage_name: str, config: PipelineConfig, version_id: str) -> S
 
     try:
         stage_fn = _STAGE_REGISTRY[stage_name]
-        stage_fn(config, version_id)
+        if stage_name == "training":
+            stage_fn(config, version_id, fine_tune=fine_tune)
+        else:
+            stage_fn(config, version_id)
         status = "completed"
         error = None
     except PromotionBlockedError as e:

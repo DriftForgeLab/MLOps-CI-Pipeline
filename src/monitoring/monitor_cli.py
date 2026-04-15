@@ -241,7 +241,9 @@ def main() -> None:
         decision = request_drift_decision(
             drift_result,
             is_image_isp=False,
+            is_image_cnn=False,
             drift_report_linked=output_path.name,
+            config_path=args.config,
         )
         if decision is not None:
             decision_path = output_dir / f"{timestamp}_decision.json"

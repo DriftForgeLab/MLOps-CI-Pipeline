@@ -635,11 +635,15 @@ def main() -> None:
 
     print("\n" + "=" * 60)
 
+    # --- Resolve model name (same as MLflow registry name used by promotion) ---
+    from src.registry.model_registry import resolve_model_name
+    registry_model_name = resolve_model_name(config)
+
     # --- Save results ---
     output_dir = (
         Path(args.output_dir)
         if args.output_dir
-        else Path("outputs/drift_monitoring/images")
+        else Path("outputs/drift_monitoring") / registry_model_name
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -649,9 +653,8 @@ def main() -> None:
 
     # --- Persistence: MLflow runtime-drift run + JSONL index ---
     experiment_name = config.mlflow.experiment_name or config.project.name
-    mlflow_model_name = config.project.name
     mlflow_run_id = log_runtime_drift_to_mlflow(
-        model_name=mlflow_model_name,
+        model_name=registry_model_name,
         drift_result=drift_result,
         tracking_uri=config.mlflow.tracking_uri,
         experiment_name=experiment_name,
@@ -660,7 +663,7 @@ def main() -> None:
         logger.info("Runtime drift logged to MLflow run %s", mlflow_run_id)
 
     append_history_entry(
-        model_name=output_dir.name,
+        model_name=registry_model_name,
         result=drift_result,
         json_path=output_path,
         outputs_root=output_dir.parent,
@@ -678,7 +681,9 @@ def main() -> None:
         decision = request_drift_decision(
             drift_result,
             is_image_isp=is_raw_isp,
+            is_image_cnn=True,
             drift_report_linked=output_path.name,
+            config_path=args.config,
         )
         if decision is not None:
             decision_path = output_dir / f"{timestamp}_decision.json"

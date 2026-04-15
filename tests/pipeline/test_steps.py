@@ -175,7 +175,8 @@ class TestPromotionStage:
         assert kwargs.get("drift") is None
 
     def test_promotion_blocked_by_metric_violation(self, tmp_path: Path):
-        """A failing promotion rule raises ValueError."""
+        """A failing promotion rule raises PromotionBlockedError."""
+        from src.pipeline.steps import PromotionBlockedError
         output_dir = tmp_path / "outputs"
         self._setup_eval_report(output_dir)
         config = self._mock_config(tmp_path)
@@ -193,7 +194,7 @@ class TestPromotionStage:
             patch("src.pipeline.steps.load_promotion_config", return_value=MagicMock()),
             patch("src.pipeline.steps.run_promotion_rules", return_value=[violation]),
         ):
-            with pytest.raises(ValueError, match="min_accuracy"):
+            with pytest.raises(PromotionBlockedError, match="min_accuracy"):
                 _promotion_stage(config, VERSION_ID)
 
     def test_no_drift_result_json_written(self, tmp_path: Path):

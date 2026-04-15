@@ -111,8 +111,6 @@ def _print_summary(report: dict, drift: dict | None = None) -> None:
                 else:
                     print(f"    {metric_name:<20} {'N/A':<10}  ({verdict})")
 
-    _print_drift_block(drift)
-
     print("\n" + "=" * 60)
 
 
@@ -136,20 +134,27 @@ def _print_drift_block(drift: dict | None) -> None:
 
     dataset_drift = overall.get("dataset_drift_detected", False)
     severity = overall.get("severity", "unknown")
-    drifted_count = overall.get("drifted_feature_count", 0)
-    total_count = overall.get("total_feature_count", 0)
-
-    drifted_names = [
-        name for name, data in features.items()
-        if data.get("drift_detected")
-    ]
+    drift_type = drift.get("drift_type", "")
+    is_image_drift = drift_type.startswith("image_")
 
     print(f"  Dataset drift detected:   {dataset_drift}")
     print(f"  Overall severity:         {severity.upper()}")
-    if drifted_names:
-        print(f"  Drifted features ({drifted_count}/{total_count}):   {', '.join(drifted_names)}")
+
+    if not is_image_drift:
+        drifted_count = overall.get("drifted_feature_count", 0)
+        total_count = overall.get("total_feature_count", 0)
+        drifted_names = [
+            name for name, data in features.items()
+            if data.get("drift_detected")
+        ]
+        if drifted_names:
+            print(f"  Drifted features ({drifted_count}/{total_count}):   {', '.join(drifted_names)}")
+        else:
+            print(f"  Drifted features ({drifted_count}/{total_count}):   none")
     else:
-        print(f"  Drifted features ({drifted_count}/{total_count}):   none")
+        drift_score = overall.get("drift_score")
+        if drift_score is not None:
+            print(f"  Drift score:              {drift_score:.4f}")
 
     warnings = drift.get("warnings") or []
     if warnings:

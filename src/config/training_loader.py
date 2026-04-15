@@ -12,6 +12,7 @@ from src.config.schema import (
     RF_HYPERPARAMS_KEYS,
     LR_HYPERPARAMS_KEYS,
     CNN_HYPERPARAMS_KEYS,
+    CNN_FINE_TUNE_KEYS,
     CNN_ARCHITECTURE_KEYS,
     CNN_CONV_LAYER_KEYS,
     RandomForestHyperparams,
@@ -20,6 +21,7 @@ from src.config.schema import (
     CnnConvLayerConfig,
     CnnArchitectureConfig,
     CnnHyperparams,
+    FineTuneConfig,
     ModelConfig,
     TrainingConfig,
 )
@@ -50,6 +52,11 @@ def _validate_training(raw: dict) -> list[str]:
     if missing_model:
         errors.append(f"Missing required keys in 'model': {', '.join(sorted(missing_model))}")
         return errors  # Cannot validate further without required keys
+
+    _KNOWN_TOP_LEVEL_KEYS = {"model", "fine_tune"}
+    extra_top = raw.keys() - _KNOWN_TOP_LEVEL_KEYS
+    if extra_top:
+        logger.warning("Unknown top-level keys in training config: %s", ", ".join(sorted(extra_top)))
 
     extra_model = model.keys() - REQUIRED_MODEL_KEYS - _OPTIONAL_MODEL_KEYS
     if extra_model:
@@ -195,6 +202,22 @@ def _validate_training(raw: dict) -> list[str]:
         else:
             errors.append("Missing required key in 'architecture': 'dropout'")
 
+    # --- Validate fine_tune block (optional, CNN only) ---
+    if "fine_tune" in raw:
+        ft = raw["fine_tune"]
+        if not isinstance(ft, dict):
+            errors.append("'fine_tune' must be a mapping")
+        else:
+            extra_ft = ft.keys() - CNN_FINE_TUNE_KEYS
+            if extra_ft:
+                logger.warning("Unknown keys in 'fine_tune': %s", ", ".join(sorted(extra_ft)))
+            if "epochs" in ft:
+                _validate_positive_int(ft["epochs"], "fine_tune.epochs", errors)
+            if "learning_rate" in ft:
+                v = ft["learning_rate"]
+                if isinstance(v, bool) or not isinstance(v, (int, float)) or v <= 0:
+                    errors.append(f"'fine_tune.learning_rate' must be a positive number, got {v!r}")
+
     return errors
 
 
@@ -243,12 +266,20 @@ def _build_training_config(raw: dict) -> TrainingConfig:
             fc_units=raw_arch["fc_units"],
             dropout=raw_arch["dropout"],
         )
+        ft_raw = raw.get("fine_tune") or {}
+        fine_tune = FineTuneConfig(
+            enabled=bool(ft_raw.get("enabled", False)),
+            epochs=int(ft_raw.get("epochs", 5)),
+            learning_rate=float(ft_raw.get("learning_rate", 0.0001)),
+            freeze_backbone=bool(ft_raw.get("freeze_backbone", False)),
+        )
         return TrainingConfig(
             model=ModelConfig(
                 algorithm=algorithm,
                 hyperparameters=hyperparams,
                 architecture=architecture,
-            )
+            ),
+            fine_tune=fine_tune,
         )
     else:  # linear_regression
         hyperparams = LinearRegressionHyperparams()

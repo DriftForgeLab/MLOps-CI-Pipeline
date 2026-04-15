@@ -41,6 +41,18 @@ def _parse_args() -> argparse.Namespace:
         required = True,
         help = "Path to pipeline config file (e.g., src/config/pipeline_tabular.yaml)"
     )
+    parser.add_argument(
+        "--fine-tune",
+        action = "store_true",
+        default = False,
+        help = (
+            "Fine-tune the existing Production model instead of training from scratch. "
+            "Loads Production weights from the MLflow Registry and continues training "
+            "with the fine_tune hyperparameters defined in training_image_cnn.yaml "
+            "(fewer epochs, lower learning rate). Only applies to CNN image pipelines; "
+            "ignored for tabular (random forest) pipelines."
+        ),
+    )
     return parser.parse_args()
 
 def _setup_logging(level_name: str) -> None:
@@ -87,12 +99,15 @@ def main() -> None:
         config.random_seed,
     )
 
+    fine_tune = args.fine_tune
+
     config_hash = compute_config_hash(config_path)
     pipeline_execution_id = uuid.uuid4().hex
 
     try:
         configure_mlflow(config, pipeline_execution_id, config_hash)
         mlflow.set_tag("pipeline.dataset_version_id", version_id)
+        mlflow.set_tag("pipeline.fine_tune", "true" if fine_tune else "false")
     except Exception as e:
         logger.warning("MLflow setup failed — tracking disabled for this run: %s", e)
 
@@ -100,7 +115,7 @@ def main() -> None:
     overall_status = "completed"
     try:
         for stage_name in config.pipeline_stages:
-            result = execute_stage(stage_name, config, version_id)
+            result = execute_stage(stage_name, config, version_id, fine_tune=fine_tune)
             stage_results.append(result)
 
             if result.status == "blocked":

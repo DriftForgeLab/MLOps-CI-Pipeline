@@ -265,3 +265,55 @@ in the monitor CLIs above.
 Set `enabled: false` (or `monitoring.enabled: false`) in `drift.yaml` and the
 monitor CLIs will short-circuit. The training pipeline is unaffected — it
 never runs drift in the first place.
+
+## Responding to Drift: Fine-Tuning the CNN Model
+
+When `monitor-drift-image` detects drift and you choose **retrain** from the
+decision menu, the recommended follow-up for CNN image pipelines is to
+fine-tune the existing Production model rather than training from scratch.
+
+### Why fine-tune instead of retrain from scratch?
+
+Full retraining discards all previously learned features. Fine-tuning starts
+from the Production model weights and continues training with fewer epochs and
+a lower learning rate, adapting the model to the new data distribution while
+preserving what it already knows. This is particularly effective when the drift
+is moderate (e.g. lighting shift, slight colour change) rather than a
+completely new data source.
+
+Fine-tuning has no effect on tabular (random forest) pipelines — random forests
+do not have reusable weights. Only CNN pipelines benefit.
+
+### How to fine-tune after detecting drift
+
+```bash
+# 1. Add or update images in data/raw/<dataset>/images/ to include new data
+
+# 2. Run the pipeline with --fine-tune
+run-pipeline --config src/config/pipeline_image.yaml --fine-tune
+
+# 3. The pipeline will:
+#    - Preprocess the updated dataset
+#    - Load the current Production model weights from MLflow Registry
+#    - Continue training with fine-tune hyperparameters (fewer epochs, lower lr)
+#    - Evaluate, compare against Production, and prompt for promotion
+```
+
+If no Production model exists (first run), `--fine-tune` falls back to
+training from scratch with a warning.
+
+### Fine-tune hyperparameters
+
+Configured in `src/config/training_image_cnn.yaml` under the `fine_tune:` block:
+
+| Parameter         | Default  | Description                                         |
+|-------------------|----------|-----------------------------------------------------|
+| `epochs`          | `5`      | Additional training epochs (fewer than full training)|
+| `learning_rate`   | `0.0001` | Lower LR to avoid overwriting learned features      |
+| `freeze_backbone` | `false`  | If `true`, only the final classifier head is trained|
+
+### MLflow traceability
+
+Fine-tune runs are tagged `pipeline.fine_tune = true` in MLflow and the
+`TrainingResult` hyperparameters include `fine_tuned`, `fine_tune_epochs`, and
+`fine_tune_lr` for full audit traceability.

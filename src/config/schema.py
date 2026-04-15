@@ -27,6 +27,7 @@ _OPTIONAL_MODEL_KEYS: frozenset[str] = frozenset({"architecture"})
 RF_HYPERPARAMS_KEYS: frozenset[str] = {"n_estimators", "max_depth", "min_samples_split", "class_weight"}
 LR_HYPERPARAMS_KEYS: frozenset[str] = {"C", "solver", "max_iter", "class_weight"}
 CNN_HYPERPARAMS_KEYS: frozenset[str] = {"epochs", "batch_size", "learning_rate"}
+CNN_FINE_TUNE_KEYS: frozenset[str] = {"enabled", "epochs", "learning_rate", "freeze_backbone"}
 CNN_ARCHITECTURE_KEYS: frozenset[str] = {"conv_layers", "fc_units", "dropout"}
 CNN_CONV_LAYER_KEYS: frozenset[str] = {"out_channels", "kernel_size"}
 
@@ -162,6 +163,22 @@ class CnnHyperparams:
     learning_rate: float = 0.001
 
 @dataclass(frozen=True)
+class FineTuneConfig:
+    """Hyperparameters used when fine-tuning from existing Production model weights.
+
+    Attributes:
+        enabled:         Whether fine-tuning is active for this run.
+        epochs:          Number of additional training epochs (fewer than full training).
+        learning_rate:   Lower LR than full training to avoid overwriting learned features.
+        freeze_backbone: If True, only the final FC classifier head is trained;
+                         convolutional layers are frozen.
+    """
+    enabled: bool = False
+    epochs: int = 5
+    learning_rate: float = 0.0001
+    freeze_backbone: bool = False
+
+@dataclass(frozen=True)
 class ModelConfig:
     algorithm: str
     hyperparameters: RandomForestHyperparams | LogisticRegressionHyperparams | LinearRegressionHyperparams | CnnHyperparams
@@ -170,6 +187,7 @@ class ModelConfig:
 @dataclass(frozen=True)
 class TrainingConfig:
     model: ModelConfig
+    fine_tune: FineTuneConfig = field(default_factory=FineTuneConfig)
 
 # ---------------------------------------------------------------------------
 # Preprocessing config dataclasses

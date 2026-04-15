@@ -79,10 +79,18 @@ def should_trip_ci_gate(
 # ---------------------------------------------------------------------------
 
 DRIFT_DECISION_OPTIONS: dict[str, str] = {
-    "retrain":      "Log decision to retrain — re-run the pipeline manually with updated data",
+    "fine_tune":    "Log decision to fine-tune — adapt existing model weights to new data distribution",
+    "retrain":      "Log decision to retrain — train a new model from scratch with updated data",
     "collect_data": "Log decision to collect more data — batch is flagged for manual review",
     "adjust_isp":   "Log decision to adjust ISP — re-run preprocessing manually (raw-image pipelines)",
     "accept":       "Log decision to accept drift — continue with current model as-is",
+}
+
+# Commands shown in the menu for options that have a direct follow-up action.
+# {option_key: command_template} — use {config} as placeholder for config path.
+_OPTION_COMMANDS: dict[str, str] = {
+    "fine_tune": "run-pipeline --config {config} --fine-tune",
+    "retrain":   "run-pipeline --config {config}",
 }
 
 # ---------------------------------------------------------------------------
@@ -130,12 +138,15 @@ class DriftDecision:
 def request_drift_decision(
     drift_result: dict,
     is_image_isp: bool = False,
+    is_image_cnn: bool = False,
     drift_report_linked: str = "drift_result.json",
+    config_path: str | None = None,
 ) -> DriftDecision | None:
     """Present a drift summary and prompt the user to choose a response action.
 
     Prints a human-readable drift summary, then presents a numbered menu of
-    response options. The user must provide a reason for their choice.
+    response options. Where applicable, the suggested follow-up command is
+    shown alongside the option. The user must provide a reason for their choice.
     Returns None if the user cancels (Q / EOF / Ctrl+C / empty reason).
 
     Args:
@@ -145,26 +156,37 @@ def request_drift_decision(
                              drift_result["drift_type"].
         is_image_isp:        True for ISP-based image drift (adds the
                              "adjust_isp" option and renders scenario table).
+        is_image_cnn:        True for CNN image pipelines (adds the "fine_tune"
+                             option with the run-pipeline --fine-tune command).
         drift_report_linked: File name to embed in the decision for traceability.
                              Callers should pass the actual report file name.
+        config_path:         Path to the pipeline config file, shown in the
+                             suggested commands for retrain / fine_tune options.
 
     Returns:
         DriftDecision if the user made a valid choice, else None.
     """
     _print_drift_summary(drift_result, is_image_isp=is_image_isp)
 
-    # Build the menu — adjust_isp only for raw-ISP image drift
+    # Build the menu — fine_tune only for CNN image pipelines,
+    #                  adjust_isp only for raw-ISP image drift
     menu: dict[str, tuple[str, str]] = {}
     idx = 1
     for key, label in DRIFT_DECISION_OPTIONS.items():
+        if key == "fine_tune" and not is_image_cnn:
+            continue
         if key == "adjust_isp" and not is_image_isp:
             continue
         menu[str(idx)] = (key, label)
         idx += 1
 
+    cfg = config_path or "<config>"
     print("\nDrift response required.")
     for num, (key, label) in menu.items():
         print(f"  [{num}] {key:<14} — {label}")
+        if key in _OPTION_COMMANDS:
+            cmd = _OPTION_COMMANDS[key].format(config=cfg)
+            print(f"       {'':14}   Command: {cmd}")
     print("  [Q] Cancel        — Abort without logging a decision")
 
     try:
