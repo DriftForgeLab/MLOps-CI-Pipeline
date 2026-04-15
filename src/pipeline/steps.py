@@ -54,7 +54,7 @@ class StageResult:
 
     Attributes:
         stage:            Name of the stage that was executed (ex. "training")
-        status:           Execution status ("completed" or "failed")
+        status:           Execution status ("completed", "failed", or "blocked")
         started_at:       ISO 8601 timestamp when stage began
         ended_at:         ISO 8601 timestamp when stage ended
         duration_seconds: Wall-clock time elapsed during execution
@@ -125,6 +125,14 @@ def _evaluation_stage(config: PipelineConfig, version_id: str) -> None:
     log_comparison_to_mlflow(report, output_dir=Path(config.output_dir))
     
 
+_MIN_ANALYSIS_ACCURACY = 0.6  # Models at or below this haven't learned enough for meaningful analysis
+
+
+class PromotionBlockedError(Exception):
+    """Raised when a model fails promotion rules. Not a system error — handled cleanly."""
+    pass
+
+
 def _model_analysis_stage(config: PipelineConfig, version_id: str) -> None:
     """Offline model analysis: ISP sensitivity or augmentation robustness.
 
@@ -140,11 +148,52 @@ def _model_analysis_stage(config: PipelineConfig, version_id: str) -> None:
     Neither branch is drift detection. Drift detection — comparing training
     data against new, real production batches over time — runs separately via
     the monitoring CLIs (monitor-drift, monitor-drift-image).
+
+    Two conditions can skip this stage:
+      1. Model accuracy is at or below _MIN_ANALYSIS_ACCURACY — the model has
+         not learned meaningful patterns, making the analysis uninformative.
+      2. The user declines when prompted interactively.
     """
+    import sys
+
     drift_config = load_drift_config(Path(config.configs.drift))
     if not drift_config.enabled:
         logger.info("  Offline model analysis disabled — skipping.")
         return
+
+    # --- Quality gate: skip if model hasn't learned ---
+    report_path = Path(config.output_dir) / "evaluation_report.json"
+    if report_path.exists():
+        with open(report_path) as f:
+            eval_report = json.load(f)
+        accuracy = eval_report.get("metrics", {}).get("accuracy", 1.0)
+        if accuracy <= _MIN_ANALYSIS_ACCURACY:
+            logger.warning(
+                "  Model accuracy=%.4f is at or below minimum threshold=%.2f "
+                "(model has not learned meaningful patterns). "
+                "Skipping model analysis — re-run after improving the model or dataset.",
+                accuracy,
+                _MIN_ANALYSIS_ACCURACY,
+            )
+            return
+
+    # --- Interactive prompt: give user the option to skip ---
+    if sys.stdin.isatty():
+        print("\n" + "=" * 60)
+        print("  MODEL ANALYSIS")
+        print("=" * 60)
+        print("\n  Augmentation robustness / ISP sensitivity analysis provides")
+        print("  insight into how the model handles image perturbations.")
+        print("  For raw image datasets this can take significant time.")
+        print()
+        try:
+            answer = input("  Run model analysis? [Y/n]: ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            answer = "n"
+        print()
+        if answer in ("n", "no"):
+            logger.info("  Model analysis skipped by user.")
+            return
 
     _run_image_model_analysis_stage(config, version_id, drift_config)
 
@@ -153,7 +202,9 @@ def _run_image_model_analysis_stage(config: PipelineConfig, version_id: str, dri
     """Dispatch to ISP sensitivity or augmentation robustness based on preprocessing config."""
     prep_config_path = Path(config.configs.preprocessing)
     prep_config = load_preprocessing_config(prep_config_path)
-    drift_dir = Path(config.data.drift_scenarios)
+    # Versioned output dir: data/drift_scenarios/<dataset>/<version_id>/
+    drift_dir = Path(config.data.drift_scenarios) / config.dataset / version_id
+    drift_dir.mkdir(parents=True, exist_ok=True)
     is_raw_isp = bool(
         prep_config.image
         and prep_config.image.raw_input
@@ -344,7 +395,7 @@ def _promotion_stage(config: PipelineConfig, version_id: str) -> None:
             f"(required {v['operator']} {v['threshold']}): {v['description']}"
             for v in violations
         )
-        raise ValueError(
+        raise PromotionBlockedError(
             f"Promotion blocked — {len(violations)} rule(s) failed:\n  {violation_lines}"
         )
 
@@ -456,6 +507,10 @@ def execute_stage(stage_name: str, config: PipelineConfig, version_id: str) -> S
         stage_fn(config, version_id)
         status = "completed"
         error = None
+    except PromotionBlockedError as e:
+        status = "blocked"
+        error = str(e)
+        logger.warning("  %s", e)
     except Exception as e:
         status = "failed"
         error = str(e)

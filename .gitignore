@@ -6,6 +6,8 @@ artifacts/
 *.egg-info/
 .pytest_cache/artifacts/
 data/processed/
+data/drift_scenarios/
+data/batches/
 outputs/
 .pytest_cache/
 .worktrees/

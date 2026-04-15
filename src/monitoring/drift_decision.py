@@ -79,11 +79,10 @@ def should_trip_ci_gate(
 # ---------------------------------------------------------------------------
 
 DRIFT_DECISION_OPTIONS: dict[str, str] = {
-    "retrain":      "Trigger model retraining with updated/additional data",
-    "collect_data": "Flag batch for additional data collection before acting",
-    "adjust_isp":   "Adjust ISP parameters and re-preprocess (raw-image pipelines)",
-    "accept":       "Accept drift — continue with current model as-is",
-    "escalate":     "Escalate to senior reviewer / incident-response track",
+    "retrain":      "Log decision to retrain — re-run the pipeline manually with updated data",
+    "collect_data": "Log decision to collect more data — batch is flagged for manual review",
+    "adjust_isp":   "Log decision to adjust ISP — re-run preprocessing manually (raw-image pipelines)",
+    "accept":       "Log decision to accept drift — continue with current model as-is",
 }
 
 # ---------------------------------------------------------------------------

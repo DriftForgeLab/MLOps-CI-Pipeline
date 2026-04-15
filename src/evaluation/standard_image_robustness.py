@@ -43,8 +43,8 @@
 #
 # Output
 # ------
-#   drift_scenarios/robustness_report.json  — machine-readable full report
-#   drift_scenarios/robustness_report.html  — human-readable summary table
+#   drift_scenarios/<dataset>/<version_id>/robustness_report.json  — machine-readable full report
+#   drift_scenarios/<dataset>/<version_id>/robustness_report.html  — human-readable summary table
 #
 # The caller (_run_standard_image_robustness_stage in steps.py) handles
 # MLflow logging, so this module has no MLflow dependency.
