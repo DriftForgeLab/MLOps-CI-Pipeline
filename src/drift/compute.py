@@ -14,7 +14,7 @@ from src.config.schema import DriftConfig
 
 logger = logging.getLogger(__name__)
 
-_SMALL_SAMPLE_THRESHOLD = 30
+_SMALL_SAMPLE_THRESHOLD = 50
 
 
 def run_evidently_drift(

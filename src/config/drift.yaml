@@ -44,8 +44,11 @@ drift:
   # Online monitoring settings
   monitoring:
     enabled: true
-    # Minimum rows in a batch to compute drift (below this, skip)
-    min_batch_size: 30
+    # Minimum rows in a batch to compute drift (below this, skip).
+    # Matches the small-sample threshold used by the statistical tests —
+    # below 50 rows KS / chi-square power degrades sharply, so results
+    # carry a "small_sample" warning on the drift report.
+    min_batch_size: 50
     # Notify user when severity reaches this level or higher
     alert_severity: "medium"
     # CI gate: in non-interactive (non-TTY) runs, exit non-zero (code 2) when

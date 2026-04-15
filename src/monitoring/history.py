@@ -18,12 +18,90 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import Iterator
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_OUTPUTS_ROOT = Path("outputs/drift_monitoring")
 _HISTORY_FILENAME = "history.jsonl"
 _DECISION_SUFFIX = "_decision.json"
+
+
+def append_history_entry(
+    model_name: str,
+    result: dict,
+    json_path: Path | str,
+    outputs_root: Path | str = DEFAULT_OUTPUTS_ROOT,
+    mlflow_run_id: str | None = None,
+) -> dict:
+    """Append one index entry for ``result`` to ``history.jsonl``.
+
+    Creates ``<outputs_root>/<model_name>/`` and an empty ``history.jsonl``
+    if neither exists. Returns the entry that was written so callers can
+    log it or forward it to other sinks.
+
+    Args:
+        model_name:    Model directory name under ``outputs_root``.
+        result:        Full drift result dict (tabular or image shape).
+        json_path:     Path to the full JSON snapshot this entry indexes.
+        outputs_root:  Root of the drift monitoring tree.
+        mlflow_run_id: Optional MLflow run ID to associate with this entry.
+
+    Returns:
+        The dict that was serialised as a JSONL line.
+    """
+    model_dir = Path(outputs_root) / model_name
+    model_dir.mkdir(parents=True, exist_ok=True)
+    history_path = model_dir / _HISTORY_FILENAME
+
+    overall = result.get("overall") or {}
+    entry: dict = {
+        "timestamp": result.get("generated_at"),
+        "dataset_version_id": result.get("dataset_version_id"),
+        "drift_type": result.get("drift_type"),
+        "overall_severity": overall.get("severity"),
+        "drift_share": overall.get("drift_share"),
+        "drifted_feature_count": overall.get("drifted_feature_count"),
+        "drift_score": overall.get("drift_score"),
+        "json_path": str(json_path),
+        "mlflow_run_id": mlflow_run_id,
+    }
+
+    with history_path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry) + "\n")
+
+    return entry
+
+
+def iter_history(
+    model_name: str,
+    outputs_root: Path | str = DEFAULT_OUTPUTS_ROOT,
+) -> Iterator[dict]:
+    """Yield each parseable entry from ``history.jsonl`` in append order.
+
+    Silently skips malformed lines so partial writes or manual edits don't
+    break downstream trending tools. Returns an empty iterator when the
+    model directory or the history file is missing.
+    """
+    model_dir = Path(outputs_root) / model_name
+    history_path = model_dir / _HISTORY_FILENAME
+    if not history_path.is_file():
+        return
+
+    try:
+        lines = history_path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        logger.warning("Failed to read %s: %s", history_path, exc)
+        return
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            yield json.loads(line)
+        except json.JSONDecodeError:
+            continue
 
 
 def load_latest_drift(

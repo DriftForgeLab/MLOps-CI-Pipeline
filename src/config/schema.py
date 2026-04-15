@@ -392,7 +392,7 @@ class DriftFeatureSeverityConfig:
 @dataclass(frozen=True)
 class DriftMonitoringConfig:
     enabled: bool = True
-    min_batch_size: int = 30
+    min_batch_size: int = 50
     alert_severity: str = "medium"
     # Conservative default: only "high" severity trips the CI gate.
     # Set to "never" to disable the non-interactive exit-code gate entirely.

@@ -151,6 +151,10 @@ def _print_drift_block(drift: dict | None) -> None:
     else:
         print(f"  Drifted features ({drifted_count}/{total_count}):   none")
 
+    warnings = drift.get("warnings") or []
+    if warnings:
+        print(f"  Warnings:                 {', '.join(warnings)}")
+
     generated_at = drift.get("generated_at")
     if generated_at:
         age_line = _format_drift_age(generated_at)

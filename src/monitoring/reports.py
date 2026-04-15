@@ -59,6 +59,11 @@ def print_drift_summary(drift_result: dict) -> None:
         f"{overall['total_feature_count']}"
     )
 
+    # --- Warnings ---
+    warnings = drift_result.get("warnings") or []
+    if warnings:
+        print(f"  Warnings:         {', '.join(warnings)}")
+
     # --- Per-feature breakdown ---
     print("\n  Per-feature breakdown:")
     for feat_name, feat_data in features.items():

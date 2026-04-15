@@ -46,7 +46,7 @@ def test_load_drift_config_severity_values():
 def test_load_drift_config_monitoring_values():
     config = load_drift_config(CONFIG_DIR / "drift.yaml")
     assert config.monitoring.enabled is True
-    assert config.monitoring.min_batch_size == 30
+    assert config.monitoring.min_batch_size == 50
     assert config.monitoring.alert_severity == "medium"
     assert config.monitoring.fail_on_severity == "high"
 

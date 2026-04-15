@@ -189,7 +189,7 @@ class TestBuildDriftResult:
             "schema_version", "drift_type", "method", "generated_at",
             "pipeline_execution_id", "dataset_version_id", "task_type",
             "reference_dataset", "current_dataset",
-            "overall", "features", "artifacts", "config_snapshot",
+            "overall", "features", "warnings", "artifacts", "config_snapshot",
         }
         assert set(result.keys()) == expected
 
@@ -422,6 +422,67 @@ class TestBuildDriftResult:
         r1.pop("generated_at")
         r2.pop("generated_at")
         assert r1 == r2
+
+    def test_warnings_default_to_empty_list(self):
+        """When no warnings are passed, the result carries an empty list."""
+        features_raw = {"f1": _feature(drift_detected=False, drift_score=0.8)}
+        overall_raw = _overall_raw(
+            drift_share=0.0, drifted_feature_count=0,
+            total_feature_count=1, dataset_drift_detected=False,
+        )
+        result = self._call(overall_raw, features_raw)
+        assert result["warnings"] == []
+
+    def test_warnings_passthrough(self):
+        """Caller-provided warnings surface on the result."""
+        features_raw = {"f1": _feature(drift_detected=False, drift_score=0.8)}
+        overall_raw = _overall_raw(
+            drift_share=0.0, drifted_feature_count=0,
+            total_feature_count=1, dataset_drift_detected=False,
+        )
+        result = build_drift_result(
+            overall_raw=overall_raw,
+            features_raw=features_raw,
+            drift_config=DriftConfig(),
+            reference_info=_ref_info(),
+            current_info=_cur_info(),
+            pipeline_execution_id="p1",
+            dataset_version_id="d1",
+            task_type="classification",
+            warnings=["small_sample"],
+        )
+        assert result["warnings"] == ["small_sample"]
+
+    def test_warnings_list_is_copied(self):
+        """Mutating the caller's warnings list must not affect the result."""
+        features_raw = {"f1": _feature(drift_detected=False, drift_score=0.8)}
+        overall_raw = _overall_raw(
+            drift_share=0.0, drifted_feature_count=0,
+            total_feature_count=1, dataset_drift_detected=False,
+        )
+        warnings = ["small_sample"]
+        result = build_drift_result(
+            overall_raw=overall_raw,
+            features_raw=features_raw,
+            drift_config=DriftConfig(),
+            reference_info=_ref_info(),
+            current_info=_cur_info(),
+            pipeline_execution_id="p1",
+            dataset_version_id="d1",
+            task_type="classification",
+            warnings=warnings,
+        )
+        warnings.append("other")
+        assert result["warnings"] == ["small_sample"]
+
+    def test_schema_version_is_1_1_0(self):
+        features_raw = {"f1": _feature(drift_detected=False, drift_score=0.8)}
+        overall_raw = _overall_raw(
+            drift_share=0.0, drifted_feature_count=0,
+            total_feature_count=1, dataset_drift_detected=False,
+        )
+        result = self._call(overall_raw, features_raw)
+        assert result["schema_version"] == "1.1.0"
 
     def test_reference_and_current_info_are_copies(self):
         """Mutating caller dicts must not affect the result."""

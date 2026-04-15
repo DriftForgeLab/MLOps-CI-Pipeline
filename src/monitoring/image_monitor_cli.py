@@ -66,7 +66,9 @@ import numpy as np
 
 from src.config.loader import load_config, load_drift_config
 from src.common.io import atomic_write_json, atomic_write_npz
+from src.monitoring.history import append_history_entry
 from src.monitoring.image_drift_monitor import monitor_image_batch
+from src.monitoring.mlflow_sink import log_runtime_drift_to_mlflow
 from src.monitoring.drift_decision import EXIT_CODE_DRIFT_GATE, should_trip_ci_gate
 from src.drift.interpret import _SEVERITY_ORD
 from src.data.prepare_batch import resolve_latest_version
@@ -620,6 +622,26 @@ def main() -> None:
     output_path = output_dir / f"{timestamp}.json"
     atomic_write_json(output_path, drift_result)
     logger.info("Drift result written to %s", output_path)
+
+    # --- Persistence: MLflow runtime-drift run + JSONL index ---
+    experiment_name = config.mlflow.experiment_name or config.project.name
+    mlflow_model_name = config.project.name
+    mlflow_run_id = log_runtime_drift_to_mlflow(
+        model_name=mlflow_model_name,
+        drift_result=drift_result,
+        tracking_uri=config.mlflow.tracking_uri,
+        experiment_name=experiment_name,
+    )
+    if mlflow_run_id:
+        logger.info("Runtime drift logged to MLflow run %s", mlflow_run_id)
+
+    append_history_entry(
+        model_name=output_dir.name,
+        result=drift_result,
+        json_path=output_path,
+        outputs_root=output_dir.parent,
+        mlflow_run_id=mlflow_run_id,
+    )
 
     # --- Decision gate ---
     overall_severity = overall["severity"]

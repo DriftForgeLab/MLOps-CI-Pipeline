@@ -22,6 +22,7 @@ from src.drift.alignment import (
     validate_feature_alignment,
 )
 from src.drift.compute import (
+    _SMALL_SAMPLE_THRESHOLD,
     run_evidently_drift,
     extract_per_feature_results,
     extract_overall_results,
@@ -67,6 +68,7 @@ def monitor_batch(
     feature_map: dict,
     drift_config: DriftConfig,
     model_name: str | None = None,
+    task_type: str = "unknown",
     *,
     interactive: bool = False,
 ) -> dict | None:
@@ -78,6 +80,9 @@ def monitor_batch(
         feature_map:   Feature map dict with ``output_features``.
         drift_config:  Drift configuration dataclass.
         model_name:    Optional model name for logging context.
+        task_type:     Pipeline task type (``"classification"``, ``"regression"``,
+                       etc.) — stamped onto the drift result for downstream
+                       filtering.
         interactive:   If True, prints drift summary to stdout.
 
     Returns:
@@ -120,6 +125,11 @@ def monitor_batch(
     per_feature_raw = extract_per_feature_results(evidently_result)
     overall_raw = extract_overall_results(evidently_result)
 
+    # Collect warnings that should land on the drift result itself.
+    warnings: list[str] = []
+    if len(batch_df) < _SMALL_SAMPLE_THRESHOLD or len(reference_df) < _SMALL_SAMPLE_THRESHOLD:
+        warnings.append("small_sample")
+
     # Build standard drift result
     drift_result = build_drift_result(
         overall_raw=overall_raw,
@@ -137,7 +147,8 @@ def monitor_batch(
         },
         pipeline_execution_id="monitoring",
         dataset_version_id="batch",
-        task_type="unknown",
+        task_type=task_type,
+        warnings=warnings,
     )
 
     # Check alert threshold

@@ -37,6 +37,8 @@ import pandas as pd
 from src.config.loader import load_config, load_drift_config
 from src.common.io import atomic_write_json
 from src.monitoring.drift import load_reference_for_model, monitor_batch
+from src.monitoring.history import append_history_entry
+from src.monitoring.mlflow_sink import log_runtime_drift_to_mlflow
 from src.monitoring.reports import print_drift_summary
 from src.monitoring.drift_decision import (
     EXIT_CODE_DRIFT_GATE,
@@ -181,6 +183,7 @@ def main() -> None:
             feature_map=feature_map,
             drift_config=drift_config,
             model_name=args.model_name,
+            task_type=config.task_type,
             interactive=sys.stdin.isatty(),
         )
     except ValueError as e:
@@ -208,6 +211,25 @@ def main() -> None:
     output_path = output_dir / f"{timestamp}.json"
     atomic_write_json(output_path, drift_result)
     logger.info("Drift result written to %s", output_path)
+
+    # --- Persistence: MLflow runtime-drift run + JSONL index ---
+    experiment_name = config.mlflow.experiment_name or config.project.name
+    mlflow_run_id = log_runtime_drift_to_mlflow(
+        model_name=args.model_name,
+        drift_result=drift_result,
+        tracking_uri=config.mlflow.tracking_uri,
+        experiment_name=experiment_name,
+    )
+    if mlflow_run_id:
+        logger.info("Runtime drift logged to MLflow run %s", mlflow_run_id)
+
+    append_history_entry(
+        model_name=args.model_name,
+        result=drift_result,
+        json_path=output_path,
+        outputs_root=output_dir.parent,
+        mlflow_run_id=mlflow_run_id,
+    )
 
     # --- Decision gate ---
     overall_severity = drift_result["overall"]["severity"]

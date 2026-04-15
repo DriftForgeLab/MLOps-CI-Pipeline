@@ -15,7 +15,7 @@ from src.config.schema import (
     DriftSeverityConfig,
 )
 
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.1.0"
 DRIFT_TYPE_TABULAR = "tabular"
 
 # Ordinal ranking used to compare severity labels against configured minima.
@@ -82,12 +82,13 @@ def build_drift_result(
     pipeline_execution_id: str,
     dataset_version_id: str,
     task_type: str,
+    warnings: list[str] | None = None,
 ) -> dict:
     """Assemble the complete standard drift result JSON.
 
     Performs per-feature and overall severity classification and stamps
     metadata. The returned dict conforms to the standard drift result
-    schema (v1.0.0).
+    schema (v1.1.0).
 
     Args:
         overall_raw:           Output of ``extract_overall_results``.
@@ -99,6 +100,9 @@ def build_drift_result(
         pipeline_execution_id: UUID linking to the pipeline run.
         dataset_version_id:    Content-addressed dataset version hash.
         task_type:             ``"classification"`` or ``"regression"``.
+        warnings:              Optional list of warning tokens (e.g.
+                               ``["small_sample"]``) surfaced as a first-class
+                               result field. Defaults to an empty list.
 
     Returns:
         Dict conforming to the standard drift result schema. ``artifacts``
@@ -171,6 +175,7 @@ def build_drift_result(
         "current_dataset": dict(current_info),
         "overall": overall_out,
         "features": features_out,
+        "warnings": list(warnings) if warnings else [],
         "artifacts": {},
         "config_snapshot": config_snapshot,
     }
