@@ -236,9 +236,7 @@ def main() -> None:
     print(f"  Dataset version:  {version_id}")
     print(f"\n  Output: {output_path}")
     print("\n  Next step — run drift analysis:")
-    print(f"\n    monitor-drift-image \\")
-    print(f"      --batch-npz {output_path} \\")
-    print(f"      --config {args.config}")
+    print(f"\n    monitor-drift-image --batch-npz {output_path} --config {args.config}")
     print("\n" + "=" * 60 + "\n")
 
     logger.info("Batch NPZ written to %s", output_path)

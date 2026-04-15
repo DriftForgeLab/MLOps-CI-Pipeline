@@ -6,7 +6,7 @@ are immutable records of what was fit; runtime drift is a separate
 observation over live data. Mixing them into the same MLflow run muddies
 both provenance and trending.
 
-This sink therefore opens a **standalone** MLflow run (never nested under
+This sink therefore opens a standalone MLflow run (never nested under
 an active training run) in the configured experiment and logs the drift
 result under the ``drift.*`` namespace. All failures are swallowed — a
 broken tracking server must never break the monitoring CLI.
