@@ -35,6 +35,7 @@ from src.drift.image_compute import (
     classify_image_severity,
     compute_statistical_drift,
     compute_embedding_drift,
+    compute_multiscale_drift,
 )
 
 logger = logging.getLogger(__name__)
@@ -123,6 +124,16 @@ def monitor_image_batch(
     overall_severity = classify_image_severity(overall_score, thresholds)
     dataset_drift_detected = overall_severity != "low"
 
+    # --- Multi-scale drift profile ---
+    # Always computed regardless of detection method.  Characterises *what*
+    # is drifting (fine detail vs global shift) rather than whether drift
+    # exists — that question is answered by the Wasserstein / MMD scores above.
+    multiscale_profile: dict | None = None
+    try:
+        multiscale_profile = compute_multiscale_drift(batch, reference)
+    except Exception as _ms_exc:
+        logger.debug("Multi-scale drift analysis failed (non-fatal): %s", _ms_exc)
+
     # --- Scenario matching (statistical method only; raw-ISP pipelines) ---
     # When method="embedding", scenario_match is always None — the embedding
     # method produces a single MMD scalar with no per-channel breakdown to match.
@@ -155,6 +166,10 @@ def monitor_image_batch(
         # drift_scenarios_dir was provided. This is interpretation, not
         # the detection itself — detection is always the reference vs batch comparison.
         "scenario_interpretation": scenario_match,
+        # multiscale_profile: per-scale Wasserstein breakdown characterising
+        # the spatial-frequency origin of any detected drift.  None only if
+        # pyramid construction failed (e.g. scipy unavailable).
+        "multiscale_profile": multiscale_profile,
     }
 
     if channel_scores:

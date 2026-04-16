@@ -79,18 +79,24 @@ def should_trip_ci_gate(
 # ---------------------------------------------------------------------------
 
 DRIFT_DECISION_OPTIONS: dict[str, str] = {
-    "fine_tune":    "Log decision to fine-tune — adapt existing model weights to new data distribution",
+    "fine_tune":    "Log decision to fine-tune — adapt model weights to the new distribution (requires labeled drifted images)",
     "retrain":      "Log decision to retrain — train a new model from scratch with updated data",
     "collect_data": "Log decision to collect more data — batch is flagged for manual review",
     "adjust_isp":   "Log decision to adjust ISP — re-run preprocessing manually (raw-image pipelines)",
     "accept":       "Log decision to accept drift — continue with current model as-is",
 }
 
-# Commands shown in the menu for options that have a direct follow-up action.
-# {option_key: command_template} — use {config} as placeholder for config path.
-_OPTION_COMMANDS: dict[str, str] = {
-    "fine_tune": "run-pipeline --config {config} --fine-tune",
-    "retrain":   "run-pipeline --config {config}",
+# Ordered follow-up steps shown in the menu for each actionable option.
+# Use {config} as a placeholder for the pipeline config path.
+# Multi-step options (like fine_tune) show each step on its own line.
+_OPTION_STEPS: dict[str, list[str]] = {
+    "fine_tune": [
+        "prepare-drift-training --drifted-dir data/batches/images/drifted --config {config}",
+        "run-pipeline --config {config} --fine-tune",
+    ],
+    "retrain": [
+        "run-pipeline --config {config}",
+    ],
 }
 
 # ---------------------------------------------------------------------------
@@ -184,9 +190,15 @@ def request_drift_decision(
     print("\nDrift response required.")
     for num, (key, label) in menu.items():
         print(f"  [{num}] {key:<14} — {label}")
-        if key in _OPTION_COMMANDS:
-            cmd = _OPTION_COMMANDS[key].format(config=cfg)
-            print(f"       {'':14}   Command: {cmd}")
+        if key in _OPTION_STEPS:
+            steps = _OPTION_STEPS[key]
+            if len(steps) == 1:
+                print(f"       {'':14}   Command: {steps[0].format(config=cfg)}")
+            else:
+                for i, step in enumerate(steps, 1):
+                    print(f"       {'':14}   Step {i}: {step.format(config=cfg)}")
+                if key == "fine_tune":
+                    print(f"       {'':14}   (Run: prepare-drift-training --help  for setup details)")
     print("  [Q] Cancel        — Abort without logging a decision")
 
     try:

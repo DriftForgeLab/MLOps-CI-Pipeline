@@ -236,6 +236,9 @@ def _build_mock_config(tmp_path: Path, is_raw: bool = False):
     config.output_dir = str(tmp_path / "outputs")
     config.configs.drift = str(tmp_path / "drift.yaml")
     config.configs.preprocessing = str(tmp_path / "prep.yaml")
+    # Prevent resolve_model_name from returning a MagicMock object, which would
+    # be stringified as "MagicMock" and create real directories on disk.
+    config.mlflow.registry_model_name = "test-model"
     return config
 
 
@@ -262,6 +265,8 @@ def _build_mock_drift_config():
 # =============================================================================
 
 class TestVersionIdMismatch:
+    @patch("src.monitoring.image_monitor_cli.log_runtime_drift_to_mlflow")
+    @patch("src.monitoring.image_monitor_cli.append_history_entry")
     @patch("src.monitoring.image_monitor_cli.atomic_write_json")
     @patch("src.monitoring.image_monitor_cli.monitor_image_batch")
     @patch("src.monitoring.image_drift_monitor.load_reference_images")
@@ -273,6 +278,7 @@ class TestVersionIdMismatch:
         self,
         mock_load_config, mock_load_drift, mock_load_prep,
         mock_resolve, mock_load_ref, mock_monitor, mock_write,
+        mock_history, mock_log_drift,
         tmp_path, caplog,
     ):
         batch_path = tmp_path / "batch.npz"
@@ -294,11 +300,14 @@ class TestVersionIdMismatch:
                     "monitor-drift-image",
                     "--batch-npz", str(batch_path),
                     "--config", "dummy.yaml",
+                    "--output-dir", str(tmp_path / "monitoring"),
                 ]
                 main()
 
         assert any("Version mismatch" in r.message for r in caplog.records)
 
+    @patch("src.monitoring.image_monitor_cli.log_runtime_drift_to_mlflow")
+    @patch("src.monitoring.image_monitor_cli.append_history_entry")
     @patch("src.monitoring.image_monitor_cli.atomic_write_json")
     @patch("src.monitoring.image_monitor_cli.monitor_image_batch")
     @patch("src.monitoring.image_drift_monitor.load_reference_images")
@@ -310,6 +319,7 @@ class TestVersionIdMismatch:
         self,
         mock_load_config, mock_load_drift, mock_load_prep,
         mock_resolve, mock_load_ref, mock_monitor, mock_write,
+        mock_history, mock_log_drift,
         tmp_path, caplog,
     ):
         batch_path = tmp_path / "batch.npz"
@@ -331,6 +341,7 @@ class TestVersionIdMismatch:
                     "monitor-drift-image",
                     "--batch-npz", str(batch_path),
                     "--config", "dummy.yaml",
+                    "--output-dir", str(tmp_path / "monitoring"),
                 ]
                 main()
 
@@ -373,13 +384,16 @@ class TestMethodAutoSelection:
         import sys
         from src.monitoring.image_monitor_cli import main
 
-        with patch("torch.load", return_value=MagicMock()):
+        with patch("src.monitoring.image_monitor_cli.append_history_entry"), \
+             patch("src.monitoring.image_monitor_cli.log_runtime_drift_to_mlflow"), \
+             patch("torch.load", return_value=MagicMock()):
             with pytest.raises(SystemExit):
                 sys.argv = [
                     "monitor-drift-image",
                     "--batch-npz", str(batch_path),
                     "--config", "dummy.yaml",
                     "--artifact-dir", str(tmp_path),
+                    "--output-dir", str(tmp_path / "monitoring"),
                 ]
                 main()
 
@@ -448,6 +462,8 @@ class TestMethodAutoSelection:
 # =============================================================================
 
 class TestInputDirWorkflow:
+    @patch("src.monitoring.image_monitor_cli.log_runtime_drift_to_mlflow")
+    @patch("src.monitoring.image_monitor_cli.append_history_entry")
     @patch("src.monitoring.image_monitor_cli.atomic_write_json")
     @patch("src.monitoring.image_monitor_cli.atomic_write_npz")
     @patch("src.monitoring.image_monitor_cli.monitor_image_batch")
@@ -461,6 +477,7 @@ class TestInputDirWorkflow:
         mock_load_config, mock_load_drift, mock_load_prep,
         mock_resolve, mock_load_ref, mock_monitor,
         mock_write_npz, mock_write_json,
+        mock_history, mock_log_drift,
         tmp_path, monkeypatch,
     ):
         """--input-dir mode should preprocess images and run monitoring."""
@@ -497,6 +514,7 @@ class TestInputDirWorkflow:
                         "monitor-drift-image",
                         "--input-dir", str(input_dir),
                         "--config", "dummy.yaml",
+                        "--output-dir", str(tmp_path / "monitoring"),
                     ]
                     main()
 
