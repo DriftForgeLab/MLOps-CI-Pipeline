@@ -346,8 +346,13 @@ def _load_cnn_model(version_id: str, artifact_dir: Path):
             "Expected: model.pt (image_classification_cnn)."
         )
     import torch
+    from src.common.device import resolve_device
+    device = resolve_device()
     logger.debug("  Loading PyTorch model from %s", pt_path)
-    return torch.load(pt_path, weights_only=False, map_location="cpu")
+    model = torch.load(pt_path, weights_only=False, map_location="cpu")
+    if hasattr(model, "to"):
+        model.to(device)
+    return model
 
 
 def _evaluate_augmentation(

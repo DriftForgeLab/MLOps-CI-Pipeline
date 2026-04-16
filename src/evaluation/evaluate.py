@@ -53,7 +53,14 @@ def evaluate(
 
     if pt_path.exists():
         import torch
+        from src.common.device import resolve_device
+        device = resolve_device()
+        # Artefacts are CPU-only (metadata.py forces .cpu() before save), so
+        # map_location="cpu" is correct on disk; the model is then moved to
+        # the active device for inference.
         model = torch.load(pt_path, weights_only=False, map_location="cpu")
+        if hasattr(model, "to"):
+            model.to(device)
     elif joblib_path.exists():
         model = joblib.load(joblib_path)
     else:

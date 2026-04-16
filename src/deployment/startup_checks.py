@@ -140,9 +140,15 @@ def _load_single_production_model(
     joblib_path = model_dir / "model.joblib"
 
     if pt_path.exists():
-        loaded_model = torch.load(pt_path, weights_only=False)
+        from src.common.device import resolve_device
+        device = resolve_device()
+        # Artefacts are CPU-only by contract (metadata.py forces .cpu() before
+        # save). Load to CPU then move to the active device for inference.
+        loaded_model = torch.load(pt_path, weights_only=False, map_location="cpu")
+        if hasattr(loaded_model, "to"):
+            loaded_model.to(device)
         model_format = "pytorch"
-        _logger.info("PyTorch model loaded from: %s", pt_path.resolve())
+        _logger.info("PyTorch model loaded from: %s (device=%s)", pt_path.resolve(), device)
     elif joblib_path.exists():
         loaded_model = joblib.load(joblib_path)
         model_format = "sklearn"

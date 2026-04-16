@@ -255,8 +255,13 @@ def _load_model(version_id: str, artifact_dir: Path, task_type: str):
 
     if pt_path.exists():
         import torch
+        from src.common.device import resolve_device
+        device = resolve_device()
         logger.debug("  Loading PyTorch model from %s (task_type=%s)", pt_path, task_type)
-        return torch.load(pt_path, weights_only=False, map_location="cpu")
+        model = torch.load(pt_path, weights_only=False, map_location="cpu")
+        if hasattr(model, "to"):
+            model.to(device)
+        return model
 
     raise FileNotFoundError(
         f"Model artifact not found at '{model_dir}'. "
@@ -433,6 +438,9 @@ def _compute_channel_gradient_sensitivity(
         import torch.nn as nn
 
         model.eval()
+        # Use the device the model already lives on (set by the loader above)
+        # so tensors and parameters match without re-resolving the env var.
+        device = next(model.parameters()).device
 
         # Sample a subset to keep runtime bounded
         n = min(len(X_nchw), max_samples)
@@ -440,15 +448,17 @@ def _compute_channel_gradient_sensitivity(
         X_sample = X_nchw[idx].astype(np.float32)
         y_sample = y_true[idx].astype(np.int64)
 
-        X_tensor = torch.tensor(X_sample, dtype=torch.float32, requires_grad=True)
-        y_tensor = torch.tensor(y_sample, dtype=torch.long)
+        # Construct on device with requires_grad=True so the result is a leaf
+        # tensor and X_tensor.grad is populated by loss.backward().
+        X_tensor = torch.tensor(X_sample, dtype=torch.float32, device=device, requires_grad=True)
+        y_tensor = torch.tensor(y_sample, dtype=torch.long, device=device)
 
         logits = model(X_tensor)
         loss = nn.CrossEntropyLoss()(logits, y_tensor)
         loss.backward()
 
         # Mean absolute gradient per channel: shape (C,)
-        grad = X_tensor.grad.detach().abs().mean(dim=(0, 2, 3))  # (C,)
+        grad = X_tensor.grad.detach().abs().mean(dim=(0, 2, 3)).cpu()  # (C,)
         num_channels = grad.shape[0]
 
         channel_names = {1: ["Y"], 3: ["R", "G", "B"], 4: ["R", "G1", "G2", "B"]}

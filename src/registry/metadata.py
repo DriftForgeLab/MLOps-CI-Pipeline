@@ -49,6 +49,11 @@ def save_model_artifact(
     if hasattr(result.model, 'state_dict'):
         import torch
         model_path = model_dir / "model.pt"
+        # Force CPU before save so artefacts stay portable across machines that
+        # do not share the training device (e.g. a CPU-only deployment loading
+        # a model trained on DirectML or CUDA). nn.Module.cpu() is in-place.
+        if hasattr(result.model, "cpu"):
+            result.model.cpu()
         torch.save(result.model, model_path)
     else:
         model_path = model_dir / "model.joblib"

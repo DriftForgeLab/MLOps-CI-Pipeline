@@ -453,10 +453,20 @@ def _predict_image(model_info, body: dict):
                 status_code=500,
                 content={"detail": f"Unsupported model format '{model_info.model_format}' for image task. Expected 'pytorch'."}
             )
+        # NHWC (H, W, C) → NCHW (1, C, H, W) as required by PyTorch Conv2d.
+        # SimpleCNN.predict handles dtype conversion and device placement
+        # internally, so we pass a numpy array directly instead of constructing
+        # a CPU tensor here (which would emit a copy warning when the model
+        # lives on a non-CPU device).
         import torch
-        # NHWC (H, W, C) → NCHW (1, C, H, W) as required by PyTorch Conv2d
-        tensor = torch.tensor(
-            arr.transpose(2, 0, 1)[np.newaxis, ...], dtype=torch.float32
+
+        from src.common.device import resolve_device
+
+        nchw = arr.transpose(2, 0, 1)[np.newaxis, ...]
+        tensor = torch.as_tensor(
+            nchw,
+            dtype=torch.float32,
+            device=resolve_device(),
         )
         class_index = int(model_info.model.predict(tensor)[0])
     except Exception as e:

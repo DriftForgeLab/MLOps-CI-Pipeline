@@ -21,6 +21,7 @@ import torch.nn as nn
 import yaml
 from torch.utils.data import DataLoader, TensorDataset
 
+from src.common.device import resolve_device
 from src.config.loader import PipelineConfig, load_training_config
 from src.config.schema import CnnArchitectureConfig, CnnHyperparams
 from src.data.preprocess import PREPROCESSED_SUBDIR
@@ -75,15 +76,19 @@ class SimpleCNN(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
 
-    def predict(self, X: np.ndarray) -> np.ndarray:
+    def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
         """sklearn-compatible predict interface. Accepts NHWC or NCHW input."""
         self.eval()
         with torch.no_grad():
             if X.ndim == 4 and X.shape[1] != self.in_channels:
-                X = X.transpose(0, 3, 1, 2)
-            tensor = torch.tensor(X, dtype=torch.float32)
+                if isinstance(X, torch.Tensor):
+                    X = X.permute(0, 3, 1, 2)
+                else:
+                    X = X.transpose(0, 3, 1, 2)
+            device = next(self.parameters()).device
+            tensor = torch.as_tensor(X, dtype=torch.float32, device=device)
             output = self.net(tensor)
-            return output.argmax(dim=1).numpy()
+            return output.argmax(dim=1).cpu().numpy()
 
 
 def _load_production_weights(config: PipelineConfig, model: "SimpleCNN") -> bool:
@@ -120,6 +125,10 @@ def _load_production_weights(config: PipelineConfig, model: "SimpleCNN") -> bool
         # (torch.save(model)) by metadata.py — not as a state_dict.
         # The artifact comes from our own MLflow Registry, so the source is trusted.
         loaded = torch.load(local_path, map_location="cpu", weights_only=False)
+        # Note: artefacts are CPU-only by contract (metadata.py forces .cpu()
+        # before save), so map_location="cpu" stays correct regardless of the
+        # active training device. The model is moved to the active device
+        # later in run_training().
         if isinstance(loaded, dict):
             model.load_state_dict(loaded)
         else:
@@ -210,20 +219,37 @@ def run_training(config: PipelineConfig, version_id: str, fine_tune: bool = Fals
     elif X_np.ndim == 3:
         X_np = X_np[:, np.newaxis, :, :]
 
+    device = resolve_device()
+    logger.info("  CNN training device: %s", device)
+
     torch.manual_seed(config.random_seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(config.random_seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+        # cudnn flags are only meaningful on CUDA. They are no-ops elsewhere
+        # but setting them under non-CUDA backends has caused warnings in
+        # past torch versions, so guard them too.
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
-    X_tensor = torch.tensor(X_np, dtype=torch.float32)
-    y_tensor = torch.tensor(y_np, dtype=torch.long)
+    X_tensor = torch.tensor(X_np, dtype=torch.float32).to(device)
+    y_tensor = torch.tensor(y_np, dtype=torch.long).to(device)
 
     dataset = TensorDataset(X_tensor, y_tensor)
     shuffle_gen = torch.Generator().manual_seed(config.random_seed)
-    loader = DataLoader(dataset, batch_size=hp.batch_size, shuffle=True, generator=shuffle_gen)
+    # pin_memory only helps for CUDA host->device transfer. DirectML and CPU
+    # do not benefit, and DirectML may warn. num_workers=0 because the dataset
+    # already lives in memory (and on the active device) — workers would only
+    # add IPC overhead.
+    loader = DataLoader(
+        dataset,
+        batch_size=hp.batch_size,
+        shuffle=True,
+        generator=shuffle_gen,
+        pin_memory=(device.type == "cuda"),
+        num_workers=0,
+    )
 
-    model = SimpleCNN(num_classes, in_channels, image_height, image_width, arch)
+    model = SimpleCNN(num_classes, in_channels, image_height, image_width, arch).to(device)
 
     # --- Fine-tuning: load Production weights if requested ---
     ft_cfg = training_config.fine_tune

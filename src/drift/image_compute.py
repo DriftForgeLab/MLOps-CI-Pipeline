@@ -185,16 +185,19 @@ def _extract_cnn_features(model, X: np.ndarray) -> np.ndarray:
         Feature array (N, feature_dim), float32.
     """
     import torch
+    from src.common.device import resolve_device
 
+    device = resolve_device()
     X_t = X.transpose(0, 3, 1, 2) if X.ndim == 4 else X
-    tensor = torch.tensor(X_t, dtype=torch.float32)
+    tensor = torch.tensor(X_t, dtype=torch.float32, device=device)
 
+    model.to(device)
     model.eval()
     with torch.no_grad():
         feature_extractor = model.net[:-1]
         features = feature_extractor(tensor)
 
-    return features.numpy()
+    return features.cpu().numpy()
 
 
 def _compute_mmd(X: np.ndarray, Y: np.ndarray) -> float:

@@ -28,6 +28,12 @@ dependencies = [
     "scipy>=1.12,<2.0",
 ]
 
+[project.optional-dependencies]
+# Windows AMD/Intel GPU acceleration via DirectML. Opt-in only — installs the
+# torch-directml plugin alongside the existing torch wheel. Not supported on
+# Linux. The Docker image deliberately omits this extra and stays CPU-only.
+directml = ["torch-directml>=0.2,<1.0"]
+
 [project.scripts]
 run-pipeline         = "src.pipeline.run_pipeline:main"
 rollback-model       = "src.registry.rollback:main"

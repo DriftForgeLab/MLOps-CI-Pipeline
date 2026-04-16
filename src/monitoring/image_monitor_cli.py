@@ -509,11 +509,15 @@ def main() -> None:
             sys.exit(1)
         try:
             import torch
+            from src.common.device import resolve_device
+            device = resolve_device()
             model = torch.load(pt_path, weights_only=False, map_location="cpu")
+            if hasattr(model, "to"):
+                model.to(device)
         except Exception as e:
             logger.error("Failed to load model from '%s': %s", pt_path, e)
             sys.exit(1)
-        logger.info("Loaded model for embedding drift: %s", pt_path.name)
+        logger.info("Loaded model for embedding drift: %s (device=%s)", pt_path.name, device)
 
     # --- Resolve optional ISP scenario matching ---
     # For raw-ISP pipelines, auto-resolve the versioned drift_scenarios dir when
