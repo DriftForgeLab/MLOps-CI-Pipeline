@@ -21,9 +21,10 @@ import yaml
 import mlflow
 from pathlib import Path
 from src.config.loader import load_config
-from src.pipeline.steps import execute_stage, StageResult
+from src.pipeline.steps import execute_stage, StageResult, run_drift_adaptation_eval
 from src.pipeline.report import compute_config_hash, build_run_report, write_run_report
 from src.pipeline.mlflow_logger import configure_mlflow, log_isp_scenario_artifacts
+from src.common.io import atomic_write_json
 from src.data.create_dataset_yaml import detect_and_generate
 from src.data.versioning import create_dataset_version
 from src.data.validate import validate_dataset
@@ -50,7 +51,16 @@ def _parse_args() -> argparse.Namespace:
             "Loads Production weights from the MLflow Registry and continues training "
             "with the fine_tune hyperparameters defined in training_image_cnn.yaml "
             "(fewer epochs, lower learning rate). Only applies to CNN image pipelines; "
-            "ignored for tabular (random forest) pipelines."
+            "ignored for tabular (random forest) pipelines.\n\n"
+            "DRIFT-ADAPTIVE FINE-TUNING (recommended workflow):\n"
+            "  When responding to detected drift, run prepare-drift-training BEFORE "
+            "this command. Organise your drifted batch into class subdirectories "
+            "(e.g. data/batches/images/drifted/cats/, dogs/) then run:\n\n"
+            "    prepare-drift-training --drifted-dir data/batches/images/drifted --config <config>\n"
+            "    run-pipeline --config <config> --fine-tune\n\n"
+            "The pipeline will then automatically evaluate the fine-tuned model on the "
+            "held-out drifted images and print a before/after performance comparison. "
+            "Run 'prepare-drift-training --help' for setup instructions."
         ),
     )
     return parser.parse_args()
@@ -61,6 +71,55 @@ def _setup_logging(level_name: str) -> None:
         format = "%(asctime)s %(levelname)-8s %(name)s %(message)s",
         datefmt = "%Y-%m-%d %H:%M:%S", 
     )
+
+def _print_drift_adaptation_eval(result: dict) -> None:
+    """Print a before/after drift adaptation evaluation summary."""
+    baseline = result.get("baseline", {})
+    after = result.get("after_finetuning", {})
+    delta = result.get("delta", {})
+    improved = result.get("improved", False)
+    n = result.get("n_holdout_images", "?")
+
+    def _fmt(val) -> str:
+        return f"{val:.4f}" if isinstance(val, float) else str(val)
+
+    def _fmt_delta(key: str) -> str:
+        v = delta.get(key)
+        if v is None:
+            return "N/A"
+        sign = "+" if v >= 0 else ""
+        return f"{sign}{v:.4f}"
+
+    print()
+    print("=" * 62)
+    print("  DRIFT ADAPTATION EVALUATION")
+    print("=" * 62)
+    print(f"\n  Held-out drifted images evaluated: {n}")
+    print()
+    print(f"  {'Metric':<12}  {'Before':>10}  {'After':>10}  {'Delta':>10}")
+    print(f"  {'-'*12}  {'-'*10}  {'-'*10}  {'-'*10}")
+    for key, label in [
+        ("accuracy",  "Accuracy"),
+        ("f1_score",  "F1 score"),
+        ("precision", "Precision"),
+        ("recall",    "Recall"),
+    ]:
+        b = _fmt(baseline.get(key, "N/A"))
+        a = _fmt(after.get(key, "N/A"))
+        d = _fmt_delta(key)
+        print(f"  {label:<12}  {b:>10}  {a:>10}  {d:>10}")
+
+    print()
+    verdict = "IMPROVED" if improved else "NO IMPROVEMENT"
+    detail = (
+        "fine-tuning improved performance on drifted images."
+        if improved
+        else "fine-tuning did not improve performance on the drifted holdout."
+    )
+    print(f"  Result: {verdict} — {detail}")
+    print()
+    print("=" * 62)
+
 
 def main() -> None:
     _setup_logging("INFO")
@@ -115,6 +174,24 @@ def main() -> None:
     overall_status = "completed"
     try:
         for stage_name in config.pipeline_stages:
+            # On fine-tune runs, evaluate the model on the held-out drifted images
+            # BEFORE the promotion stage so the user sees before/after performance
+            # when making the promotion decision.
+            if stage_name == "promotion" and fine_tune:
+                drift_eval = run_drift_adaptation_eval(config, version_id)
+                if drift_eval is not None:
+                    eval_path = Path(config.output_dir) / "drift_adaptation_eval.json"
+                    atomic_write_json(eval_path, drift_eval)
+                    logger.info("Drift adaptation eval written to %s", eval_path)
+                    if mlflow.active_run():
+                        for key, val in drift_eval.get("delta", {}).items():
+                            mlflow.log_metric(f"drift_adapt.delta_{key}", val)
+                        mlflow.log_metric(
+                            "drift_adapt.after_accuracy",
+                            drift_eval["after_finetuning"].get("accuracy", 0.0),
+                        )
+                        mlflow.log_artifact(str(eval_path), artifact_path="outputs")
+
             result = execute_stage(stage_name, config, version_id, fine_tune=fine_tune)
             stage_results.append(result)
 
@@ -159,6 +236,26 @@ def main() -> None:
         if mlflow.active_run():
             mlflow.set_tag("pipeline.overall_status", overall_status)
             mlflow.log_artifact(str(output_report_path), artifact_path="outputs")
+
+        # --- Drift adaptation evaluation (fine-tune runs only) ---
+        # Evaluates the fine-tuned model on the held-out drifted images saved
+        # by prepare-drift-training, and prints a before/after comparison.
+        # Skips silently if prepare-drift-training was not run beforehand.
+        if fine_tune and overall_status == "completed":
+            drift_eval = run_drift_adaptation_eval(config, version_id)
+            if drift_eval is not None:
+                _print_drift_adaptation_eval(drift_eval)
+                eval_path = Path(config.output_dir) / "drift_adaptation_eval.json"
+                atomic_write_json(eval_path, drift_eval)
+                logger.info("Drift adaptation eval written to %s", eval_path)
+                if mlflow.active_run():
+                    for key, val in drift_eval.get("delta", {}).items():
+                        mlflow.log_metric(f"drift_adapt.delta_{key}", val)
+                    mlflow.log_metric(
+                        "drift_adapt.after_accuracy",
+                        drift_eval["after_finetuning"].get("accuracy", 0.0),
+                    )
+                    mlflow.log_artifact(str(eval_path), artifact_path="outputs")
     finally:
         mlflow.end_run()
 

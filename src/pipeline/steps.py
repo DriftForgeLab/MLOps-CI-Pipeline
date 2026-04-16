@@ -469,6 +469,115 @@ def _promotion_stage(config: PipelineConfig, version_id: str) -> None:
     attach_lineage_tags(config, model_version.version, run, report, decision)
 
 
+def run_drift_adaptation_eval(
+    config: PipelineConfig,
+    version_id: str,
+) -> dict | None:
+    """Evaluate the fine-tuned model on the held-out drifted images.
+
+    Looks for a holdout set at data/evaluation/drifted_holdout/<dataset>/ and
+    baseline metrics from a prior prepare-drift-training run. If both are
+    present, evaluates the newly trained model on the holdout and returns a
+    structured comparison report.
+
+    Skips silently (returns None) when:
+      - No holdout directory exists (prepare-drift-training was not run).
+      - No baseline metrics file exists.
+      - The holdout directory contains no images.
+
+    Args:
+        config:     Pipeline config for the current run.
+        version_id: Dataset/model version hash for the fine-tuned model.
+
+    Returns:
+        Dict with keys "baseline", "after_finetuning", "delta", and
+        "improved" (bool), or None if the evaluation was skipped.
+    """
+    from src.data.drift_adaptation import (
+        evaluate_on_holdout_dir,
+        load_baseline_metrics,
+        load_class_to_index,
+        load_normalization_stats,
+    )
+    from src.config.loader import load_preprocessing_config
+    from src.data.prepare_batch import load_training_stats
+
+    holdout_dir = Path(config.data.evaluation) / "drifted_holdout" / config.dataset
+    if not holdout_dir.exists():
+        logger.debug(
+            "No drifted holdout directory found at '%s' — skipping drift adaptation eval.",
+            holdout_dir,
+        )
+        return None
+
+    baseline_payload = load_baseline_metrics(holdout_dir)
+    if baseline_payload is None:
+        logger.debug(
+            "No baseline metrics found in '%s' — skipping drift adaptation eval.",
+            holdout_dir,
+        )
+        return None
+
+    # Load fine-tuned model (from this run's version_id)
+    model_pt = Path("artifacts/runs") / version_id / "model" / "model.pt"
+    if not model_pt.exists():
+        logger.warning(
+            "Fine-tuned model not found at '%s' — skipping drift adaptation eval.",
+            model_pt,
+        )
+        return None
+
+    try:
+        import torch
+        model = torch.load(str(model_pt), weights_only=False, map_location="cpu")
+    except Exception as e:
+        logger.warning("Could not load fine-tuned model for drift eval: %s", e)
+        return None
+
+    # Load preprocessing config, normalization stats, and class mapping.
+    # Prefer the normalization stats saved by prepare-drift-training (from the
+    # original dataset version) so that the baseline and post-fine-tuning
+    # evaluations use identical scaling even when the dataset version changed.
+    try:
+        prep_config = load_preprocessing_config(Path(config.configs.preprocessing))
+        processed_dir = Path(config.data.processed)
+        saved_mean, saved_std = load_normalization_stats(holdout_dir)
+        if saved_mean is not None:
+            norm_mean, norm_std = saved_mean, saved_std
+        else:
+            norm_mean, norm_std, _ = load_training_stats(processed_dir, config.dataset, version_id)
+        class_to_index = load_class_to_index(processed_dir, config.dataset, version_id)
+    except Exception as e:
+        logger.warning("Could not load preprocessing info for drift eval: %s", e)
+        return None
+
+    # Evaluate fine-tuned model on holdout
+    try:
+        after_metrics = evaluate_on_holdout_dir(
+            model, holdout_dir, prep_config, norm_mean, norm_std, class_to_index
+        )
+    except Exception as e:
+        logger.warning("Holdout evaluation failed: %s", e)
+        return None
+
+    baseline_metrics = baseline_payload["metrics"]
+    delta = {
+        key: round(after_metrics[key] - baseline_metrics[key], 4)
+        for key in ("accuracy", "f1_score", "precision", "recall")
+        if key in after_metrics and key in baseline_metrics
+    }
+    improved = delta.get("accuracy", 0.0) > 0.0
+
+    return {
+        "holdout_dir": str(holdout_dir),
+        "n_holdout_images": after_metrics["n_samples"],
+        "baseline": baseline_metrics,
+        "after_finetuning": after_metrics,
+        "delta": delta,
+        "improved": improved,
+    }
+
+
 _STAGE_REGISTRY: dict[str, Callable] = {
     "preprocessing":  _preprocessing_stage,
     "training":       _training_stage,

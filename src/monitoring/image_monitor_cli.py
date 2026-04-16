@@ -306,6 +306,77 @@ def _auto_resolve_model_pt(
 # Main
 # =============================================================================
 
+def _offer_prepare_drift_training(config_path: str) -> None:
+    """Offer to run prepare-drift-training immediately after a fine_tune decision.
+
+    Prompts for the drifted image directory (defaulting to the project convention)
+    and launches prepare-drift-training as a subprocess if confirmed. After it
+    completes successfully, offers to run run-pipeline --fine-tune immediately.
+    """
+    import subprocess
+
+    print()
+    print("  You chose fine_tune. Would you like to run prepare-drift-training now?")
+    print("  This will split your drifted images, record a baseline, and add the")
+    print("  training portion to the dataset — ready for run-pipeline --fine-tune.")
+    print()
+
+    try:
+        answer = input("  Run prepare-drift-training now? [Y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = "n"
+
+    if answer not in ("", "y", "yes"):
+        print()
+        print("  Skipped. Run manually when ready:")
+        print(f"    prepare-drift-training --drifted-dir data/batches/images/drifted --config {config_path}")
+        print(f"    run-pipeline --config {config_path} --fine-tune")
+        return
+
+    default_dir = "data/batches/images/drifted"
+    try:
+        drifted_dir = input(f"  Drifted images directory [{default_dir}]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        drifted_dir = ""
+    if not drifted_dir:
+        drifted_dir = default_dir
+
+    print()
+    result = subprocess.run(
+        [sys.executable, "-m", "src.monitoring.prepare_drift_cli",
+         "--drifted-dir", drifted_dir,
+         "--config", config_path],
+        check=False,
+    )
+
+    if result.returncode != 0:
+        print()
+        print("  prepare-drift-training did not complete successfully.")
+        print("  Fix the issue above, then run:")
+        print(f"    prepare-drift-training --drifted-dir {drifted_dir} --config {config_path}")
+        print(f"    run-pipeline --config {config_path} --fine-tune")
+        return
+
+    print()
+    try:
+        answer2 = input("  Run run-pipeline --fine-tune now? [Y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer2 = "n"
+
+    if answer2 in ("", "y", "yes"):
+        print()
+        subprocess.run(
+            [sys.executable, "-m", "src.pipeline.run_pipeline",
+             "--config", config_path,
+             "--fine-tune"],
+            check=False,
+        )
+    else:
+        print()
+        print("  Run when ready:")
+        print(f"    run-pipeline --config {config_path} --fine-tune")
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -591,6 +662,26 @@ def main() -> None:
         for ch, data in channels.items():
             print(f"    {ch}: {data['drift_score']:.6f}  ({data['severity']})")
 
+    multiscale = drift_result.get("multiscale_profile")
+    if multiscale:
+        levels = multiscale.get("levels", [])
+        ratio = multiscale.get("scale_decay_ratio", "?")
+        interp = multiscale.get("interpretation", "")
+        print(f"\n  Multi-scale drift profile  (scale_decay_ratio: {ratio}x):")
+        for lvl_data in levels:
+            lvl = lvl_data["level"]
+            factor = lvl_data["resolution_factor"]
+            shape = lvl_data.get("spatial_shape", ["?", "?"])
+            score = lvl_data["overall_score"]
+            ch = lvl_data.get("channel_scores", {})
+            ch_str = "  ".join(f"{k}: {v:.4f}" for k, v in ch.items())
+            label = "full res" if lvl == 0 else f"{factor} res"
+            print(
+                f"    Level {lvl} ({label}, {shape[0]}×{shape[1]}):  "
+                f"score={score:.6f}   [{ch_str}]"
+            )
+        print(f"  Interpretation: {interp}")
+
     scenario_interp = drift_result.get("scenario_interpretation")
     if scenario_interp:
         matched_name = scenario_interp['matched_scenario']
@@ -689,6 +780,9 @@ def main() -> None:
             decision_path = output_dir / f"{timestamp}_decision.json"
             atomic_write_json(decision_path, decision.to_dict())
             logger.info("Drift decision written to %s", decision_path)
+
+            if decision.option == "fine_tune":
+                _offer_prepare_drift_training(args.config)
 
     # --- CI exit-code gate (non-interactive only) ---
     fail_on = drift_config.monitoring.fail_on_severity
