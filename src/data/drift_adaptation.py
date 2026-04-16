@@ -233,17 +233,23 @@ def evaluate_on_holdout_dir(
 ) -> dict:
     """Evaluate a CNN model on the held-out drifted images.
 
-    Applies the same preprocessing as the training pipeline (resize, colour
-    mode conversion, z-score normalisation) and then runs model.predict().
-    Only handles standard JPG/PNG images (raw DNG pipelines are not supported
-    for holdout evaluation in this release).
+    Applies the same preprocessing as the training pipeline (ISP or PIL resize,
+    colour mode conversion, z-score normalisation) and then runs model.predict().
+    Supports both standard JPG/PNG pipelines and raw DNG/ISP pipelines:
+
+    - Standard (raw_input=False): PIL → resize → [0,1] → z-score
+    - RAW DNG  (raw_input=True):  rawpy → ISP → skimage resize → [0,1] → z-score
+
+    The ISP config used for RAW images is the *baseline* config from the
+    preprocessing config (img_config.isp), matching the config used during
+    normal training preprocessing.
 
     Args:
-        model:         Trained PyTorch CNN with a .predict(X_nchw) method.
-        holdout_dir:   Path to ImageFolder holdout directory.
-        prep_config:   PreprocessingConfig with an .image section.
-        norm_mean:     Channel-wise mean from training (None = no z-score).
-        norm_std:      Channel-wise std from training.
+        model:          Trained PyTorch CNN with a .predict(X_nchw) method.
+        holdout_dir:    Path to ImageFolder holdout directory.
+        prep_config:    PreprocessingConfig with an .image section.
+        norm_mean:      Channel-wise mean from training (None = no z-score).
+        norm_std:       Channel-wise std from training.
         class_to_index: Class name → integer index mapping from feature_map.json.
 
     Returns:
@@ -252,8 +258,8 @@ def evaluate_on_holdout_dir(
 
     Raises:
         ValueError: If no valid images are found after label filtering.
+        ImportError: If rawpy/scikit-image are missing for a RAW pipeline.
     """
-    from PIL import Image
     from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 
     img_config = prep_config.image
@@ -263,7 +269,6 @@ def evaluate_on_holdout_dir(
             "holdout evaluation requires an image pipeline."
         )
 
-    target_h, target_w = img_config.target_size
     entries = scan_image_folder(holdout_dir)
 
     if not entries:
@@ -282,18 +287,16 @@ def evaluate_on_holdout_dir(
                 img_path.name, class_name,
             )
             continue
-        try:
-            img = Image.open(img_path)
-            if img_config.color_mode == "grayscale":
-                img = img.convert("L")
-            else:
-                img = img.convert("RGB")
-            img = img.resize((target_w, target_h))  # PIL uses (W, H)
-            arr = np.array(img, dtype=np.float64) / 255.0
-            arrays.append(arr)
-            labels.append(class_to_index[class_name])
-        except Exception as exc:
-            logger.warning("Could not load holdout image '%s': %s", img_path.name, exc)
+
+        if img_config.raw_input:
+            arr = _load_holdout_image_raw(img_path, img_config)
+        else:
+            arr = _load_holdout_image_standard(img_path, img_config)
+
+        if arr is None:
+            continue
+        arrays.append(arr)
+        labels.append(class_to_index[class_name])
 
     if not arrays:
         raise ValueError(
@@ -329,6 +332,72 @@ def evaluate_on_holdout_dir(
             for idx in np.unique(y_true)
         },
     }
+
+
+def _load_holdout_image_standard(
+    img_path: Path,
+    img_config,
+) -> np.ndarray | None:
+    """Load one standard JPG/PNG holdout image using PIL.
+
+    Mirrors prepare_batch._load_standard_images for a single image.
+    Returns a float64 array scaled to [0, 1] when normalize=True,
+    or [0, 255] when normalize=False.  Returns None on load failure.
+    """
+    try:
+        from PIL import Image
+        target_h, target_w = img_config.target_size
+        img = Image.open(img_path)
+        img = img.convert("L" if img_config.color_mode == "grayscale" else "RGB")
+        img = img.resize((target_w, target_h))  # PIL uses (W, H)
+        arr = np.array(img, dtype=np.float64)
+        if img_config.normalize:
+            arr = arr / 255.0
+        return arr
+    except Exception as exc:
+        logger.warning("Could not load holdout image '%s': %s", img_path.name, exc)
+        return None
+
+
+def _load_holdout_image_raw(
+    img_path: Path,
+    img_config,
+) -> np.ndarray | None:
+    """Load one RAW DNG holdout image through the ISP pipeline.
+
+    Mirrors prepare_batch._load_raw_images for a single image.
+    Uses the baseline ISP config (img_config.isp) — the same ISP parameters
+    that were used during normal training preprocessing, not any drift scenario
+    variant.  Returns float64 in [0, 1] (skimage_resize preserves this range).
+    Returns None on load failure.
+
+    Raises:
+        ImportError: If rawpy or scikit-image are not installed.
+    """
+    try:
+        import rawpy
+        from skimage.transform import resize as skimage_resize
+    except ImportError:
+        raise ImportError(
+            "rawpy and scikit-image are required for RAW DNG holdout evaluation. "
+            "Install with: pip install rawpy scikit-image"
+        )
+
+    from src.data.isp_pipeline import run_isp, read_camera_params
+
+    try:
+        target_h, target_w = img_config.target_size
+        with rawpy.imread(str(img_path)) as raw:
+            raw_array = raw.raw_image_visible.copy().astype(np.float32)
+        camera_params = read_camera_params(img_path)
+        rgb = run_isp(raw_array, img_config.isp, camera_params)
+        if img_config.color_mode == "grayscale":
+            luma = 0.299 * rgb[..., 0] + 0.587 * rgb[..., 1] + 0.114 * rgb[..., 2]
+            return skimage_resize(luma, (target_h, target_w), anti_aliasing=True)
+        return skimage_resize(rgb, (target_h, target_w, 3), anti_aliasing=True)
+    except Exception as exc:
+        logger.warning("Could not load RAW holdout image '%s': %s", img_path.name, exc)
+        return None
 
 
 def load_class_to_index(

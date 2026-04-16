@@ -7,6 +7,7 @@ from src.promotion.approval import (
     request_approval,
     _print_summary,
     _print_drift_block,
+    _print_drift_eval_block,
 )
 
 
@@ -194,11 +195,13 @@ class TestPrintSummary:
 # ── _print_summary: drift block ──────────────────────────────────────────────
 
 class TestPrintSummaryDrift:
-    """Verify drift block is no longer shown in the promotion summary.
+    """Verify monitoring drift block is NOT shown in the promotion summary.
 
-    Drift status was removed from the promotion summary because it reflects
-    pre-training state and is misleading after fine-tuning. The internal
-    _print_drift_block helper still exists for standalone use.
+    The drift monitoring block reflects pre-training detection state and is
+    intentionally excluded from the promotion summary because it would be
+    misleading after fine-tuning (a "high drift" label persists even after
+    the model has adapted). The drift adaptation eval block is shown instead.
+    The internal _print_drift_block helper still exists for standalone use.
     """
 
     def test_drift_not_shown_in_summary(self, capsys):
@@ -213,8 +216,29 @@ class TestPrintSummaryDrift:
         output = capsys.readouterr().out
         assert "DRIFT STATUS" not in output
 
+    def test_drift_eval_shown_when_provided(self, capsys):
+        """drift_eval dict must produce a DRIFT ADAPTATION block in the summary."""
+        drift_eval = {
+            "n_holdout_images": 4,
+            "baseline": {"accuracy": 0.5, "f1_score": 0.33, "precision": 0.25, "recall": 0.5},
+            "after_finetuning": {"accuracy": 1.0, "f1_score": 1.0, "precision": 1.0, "recall": 1.0},
+            "delta": {"accuracy": 0.5, "f1_score": 0.67, "precision": 0.75, "recall": 0.5},
+            "improved": True,
+        }
+        _print_summary(_minimal_report(), drift_eval=drift_eval)
+        output = capsys.readouterr().out
+        assert "DRIFT ADAPTATION" in output
+        assert "IMPROVED" in output
+        assert "DRIFT STATUS" not in output
 
-# ── request_approval: drift kwarg no longer shown in summary ─────────────────
+    def test_no_drift_eval_no_drift_adaptation_block(self, capsys):
+        """Without drift_eval the DRIFT ADAPTATION block must not appear."""
+        _print_summary(_minimal_report())
+        output = capsys.readouterr().out
+        assert "DRIFT ADAPTATION" not in output
+
+
+# ── request_approval: drift kwarg not shown; drift_eval kwarg shown ──────────
 
 class TestRequestApprovalDrift:
     def test_drift_kwarg_not_shown_in_summary(self, monkeypatch, capsys):
@@ -233,6 +257,61 @@ class TestRequestApprovalDrift:
         output = capsys.readouterr().out
         assert "DRIFT STATUS" not in output
         assert result.approved is True
+
+    def test_drift_eval_kwarg_shown_in_summary(self, monkeypatch, capsys):
+        """Passing drift_eval= renders the DRIFT ADAPTATION block before the prompt."""
+        monkeypatch.setattr("builtins.input", lambda prompt: "1")
+        drift_eval = {
+            "n_holdout_images": 4,
+            "baseline": {"accuracy": 0.5, "f1_score": 0.33, "precision": 0.25, "recall": 0.5},
+            "after_finetuning": {"accuracy": 1.0, "f1_score": 1.0, "precision": 1.0, "recall": 1.0},
+            "delta": {"accuracy": 0.5, "f1_score": 0.67, "precision": 0.75, "recall": 0.5},
+            "improved": True,
+        }
+        result = request_approval(_minimal_report(), drift_eval=drift_eval)
+        output = capsys.readouterr().out
+        assert "DRIFT ADAPTATION" in output
+        assert "IMPROVED" in output
+        assert result.approved is True
+
+
+# ── _print_drift_eval_block ──────────────────────────────────────────────────
+
+class TestPrintDriftEvalBlock:
+    def _eval_dict(self, improved=True):
+        return {
+            "n_holdout_images": 4,
+            "baseline": {"accuracy": 0.5, "f1_score": 0.33, "precision": 0.25, "recall": 0.5},
+            "after_finetuning": {"accuracy": 1.0, "f1_score": 1.0, "precision": 1.0, "recall": 1.0},
+            "delta": {"accuracy": 0.5, "f1_score": 0.67, "precision": 0.75, "recall": 0.5},
+            "improved": improved,
+        }
+
+    def test_shows_drift_adaptation_header(self, capsys):
+        _print_drift_eval_block(self._eval_dict())
+        output = capsys.readouterr().out
+        assert "DRIFT ADAPTATION" in output
+
+    def test_shows_improved_when_improved(self, capsys):
+        _print_drift_eval_block(self._eval_dict(improved=True))
+        output = capsys.readouterr().out
+        assert "IMPROVED" in output
+
+    def test_shows_no_improvement_when_not_improved(self, capsys):
+        _print_drift_eval_block(self._eval_dict(improved=False))
+        output = capsys.readouterr().out
+        assert "NO IMPROVEMENT" in output
+
+    def test_shows_holdout_count(self, capsys):
+        _print_drift_eval_block(self._eval_dict())
+        output = capsys.readouterr().out
+        assert "4" in output
+
+    def test_shows_before_and_after_accuracy(self, capsys):
+        _print_drift_eval_block(self._eval_dict())
+        output = capsys.readouterr().out
+        assert "0.5000" in output
+        assert "1.0000" in output
 
 
 # ── _print_drift_block: age / staleness rendering ────────────────────────────

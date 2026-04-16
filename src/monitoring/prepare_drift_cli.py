@@ -18,13 +18,25 @@
 #
 # To use a batch for drift-adaptive fine-tuning, the images must be organised
 # into class subdirectories (ImageFolder layout) matching the dataset's class
-# names exactly. For example, for the sample_images dataset:
+# names exactly.
 #
+# Standard JPG/PNG pipeline (sample_images dataset):
 #   data/batches/images/drifted/
 #     cats/            ← must match class name in data/raw/sample_images/images/
 #       cat_000.png
 #     dogs/
 #       dog_000.png
+#
+# RAW DNG / ISP pipeline (drone_raw dataset):
+#   data/batches/images/drifted_raw/
+#     scene_a/         ← must match class name in data/raw/drone_raw/images/
+#       DJI_0001.DNG
+#     scene_b/
+#       DJI_0011.DNG
+#
+# Holdout images are preprocessed through the full pipeline (ISP for RAW,
+# PIL for standard) using the baseline preprocessing config, so the evaluation
+# is on the same input representation the model was trained on.
 #
 # The monitoring CLI (monitor-drift-image) already works with both flat and
 # ImageFolder batch directories — adding class subdirs does not break monitoring.
@@ -74,10 +86,11 @@ def _parse_args() -> argparse.Namespace:
             "Path to a directory of labeled drifted images in ImageFolder layout: "
             "one subdirectory per class, images inside. "
             "Subdirectory names must match the dataset's class names exactly. "
-            "The conventional location is data/batches/images/<batch_name>/ — "
-            "the same directory used with monitor-drift-image, but with class "
-            "subdirectories added (e.g. data/batches/images/drifted/cats/, "
-            "data/batches/images/drifted/dogs/). "
+            "Works for both standard JPG/PNG pipelines and RAW DNG/ISP pipelines — "
+            "the preprocessing config determines which loading path is used. "
+            "Conventional locations: "
+            "data/batches/images/drifted/ (standard), "
+            "data/batches/images/drifted_raw/ (RAW DNG). "
             "The monitoring CLI already scans recursively, so adding class subdirs "
             "does not break monitor-drift-image on the same directory."
         ),
