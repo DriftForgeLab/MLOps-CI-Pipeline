@@ -64,6 +64,13 @@ image:
       black_level: null
 
     # -------------------------------------------------------------------------
+    # GPU acceleration (opt-in, default false)
+    # When true, demosaicing and fused denoising+sharpening run on GPU via
+    # PyTorch (CUDA or DirectML). Falls back to CPU if no GPU is available.
+    # -------------------------------------------------------------------------
+    gpu_accelerated: true
+
+    # -------------------------------------------------------------------------
     # Step 2: Demosaicing
     # Reconstructs full RGB from the single-channel Bayer mosaic pattern.
     # No parameters to override — algorithm is the only choice.

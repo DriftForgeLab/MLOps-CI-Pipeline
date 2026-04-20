@@ -214,6 +214,8 @@ def _validate_isp_section(isp: dict, errors: list[str]) -> None:
                 elif not (1.0 <= v <= 2.8):
                     errors.append(f"'image.isp.gamma_correction.gamma' = {v} is outside valid range [1.0, 2.8]")
 
+    _validate_bool(isp, "gpu_accelerated", errors, prefix="image.isp.")
+
 
 def _validate_image_augmentation(aug: dict, errors: list[str]) -> None:
     """Validate the image.augmentation sub-section."""
@@ -440,6 +442,7 @@ def _build_isp_config(raw: dict | None) -> ISPConfig | None:
         gamma_correction=ISPGammaConfig(
             gamma=float(gc_raw.get("gamma", 2.2)),
         ),
+        gpu_accelerated=bool(raw.get("gpu_accelerated", False)),
     )
 
 

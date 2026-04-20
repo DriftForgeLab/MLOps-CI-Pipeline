@@ -396,3 +396,54 @@ class TestRunISP:
         result_flat = run_isp(bayer, _make_isp_config(gamma=1.0))
         result_lifted = run_isp(bayer, _make_isp_config(gamma=2.8))
         assert result_lifted.mean() > result_flat.mean()
+
+    def test_profile_true_does_not_change_output(self):
+        """profile=True must produce identical output to profile=False."""
+        pytest.importorskip("colour_demosaicing")
+        bayer = _make_bayer(32, 32)
+        cfg = _make_isp_config()
+        result_no_profile = run_isp(bayer, cfg, profile=False)
+        result_profile    = run_isp(bayer, cfg, profile=True)
+        np.testing.assert_array_equal(result_no_profile, result_profile)
+
+    def test_gpu_accelerated_false_no_change(self):
+        """gpu_accelerated=False must produce same output as default config."""
+        pytest.importorskip("colour_demosaicing")
+        bayer = _make_bayer(32, 32)
+        cfg_default = _make_isp_config()
+        cfg_gpu_off = ISPConfig(
+            black_level_correction=cfg_default.black_level_correction,
+            demosaicing=cfg_default.demosaicing,
+            white_balance=cfg_default.white_balance,
+            color_correction=cfg_default.color_correction,
+            denoising=cfg_default.denoising,
+            sharpening=cfg_default.sharpening,
+            gamma_correction=cfg_default.gamma_correction,
+            gpu_accelerated=False,
+        )
+        result_default = run_isp(bayer, cfg_default)
+        result_gpu_off = run_isp(bayer, cfg_gpu_off)
+        np.testing.assert_array_equal(result_default, result_gpu_off)
+
+    def test_gpu_accelerated_true_cpu_fallback_matches_cpu(self):
+        """gpu_accelerated=True bilinear demosaic (CPU device) matches colour-demosaicing."""
+        pytest.importorskip("colour_demosaicing")
+        bayer = _make_bayer(32, 32)
+        cfg_cpu = _make_isp_config(denoising_algorithm="none", sharpening_algorithm="none")
+        cfg_gpu = ISPConfig(
+            black_level_correction=cfg_cpu.black_level_correction,
+            demosaicing=cfg_cpu.demosaicing,
+            white_balance=cfg_cpu.white_balance,
+            color_correction=cfg_cpu.color_correction,
+            denoising=cfg_cpu.denoising,
+            sharpening=cfg_cpu.sharpening,
+            gamma_correction=cfg_cpu.gamma_correction,
+            gpu_accelerated=True,
+        )
+        result_cpu = run_isp(bayer, cfg_cpu)
+        # GPU path uses gpu_demosaic_bilinear(resolve_device()) — same math as CPU bilinear
+        result_gpu = run_isp(bayer, cfg_gpu)
+        # Float32 GPU vs float64 CPU: differences are within float32 precision
+        assert np.allclose(result_cpu, result_gpu, atol=1e-4), (
+            f"max diff = {np.abs(result_cpu - result_gpu).max():.2e}"
+        )

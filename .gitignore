@@ -22,3 +22,5 @@ data/raw/drone_raw/
 !data/raw/*/dataset.yaml
 !data/raw/*/README.md
 data/evaluation/drifted_holdout/**
+build/
+data/raw/fivek/

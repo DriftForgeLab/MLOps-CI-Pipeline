@@ -20,12 +20,13 @@ dependencies = [
     "evidently==0.6.7",
     "pyyaml==6.0.1",
     "Pillow>=10.0,<12",
-    "torch==2.2.2",
-    "torchvision==0.17.2",
+    "torch==2.4.1",
+    "torchvision==0.19.1",
     "rawpy>=0.18,<1.0",
     "colour-demosaicing>=0.2,<1.0",
     "scikit-image>=0.22,<1.0",
     "scipy>=1.12,<2.0",
+    "python-dateutil>=2.9,<3.0"
 ]
 
 [project.optional-dependencies]

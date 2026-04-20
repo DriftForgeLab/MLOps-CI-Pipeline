@@ -14,6 +14,7 @@
 import hashlib
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -127,17 +128,23 @@ def _load_and_transform_raw_images(
     labels = []
     paths = []
 
+    total_io_ms = 0.0
+    total_isp_ms = 0.0
+    total_resize_ms = 0.0
+
     for img_path, class_name in entries:
         try:
             # Read raw Bayer data — copy immediately to free rawpy object
+            _t_io = time.perf_counter()
             with rawpy.imread(str(img_path)) as raw:
                 raw_array = raw.raw_image_visible.copy().astype(np.float32)
-
-            # Read camera parameters from DNG metadata
+            # Read camera parameters from DNG metadata (also I/O)
             camera_params = read_camera_params(img_path)
+            _t_isp = time.perf_counter()
 
             # Run ISP pipeline → float64 RGB in [0, 1]
             rgb = run_isp(raw_array, img_config.isp, camera_params)
+            _t_resize = time.perf_counter()
 
             # Resize on float array (no precision loss from uint8 conversion)
             if img_config.color_mode == "grayscale":
@@ -148,6 +155,18 @@ def _load_and_transform_raw_images(
                 arr = skimage_resize(
                     rgb, (target_h, target_w, 3), anti_aliasing=True
                 )
+            _t_done = time.perf_counter()
+
+            io_ms     = (_t_isp   - _t_io)     * 1000
+            isp_ms    = (_t_resize - _t_isp)   * 1000
+            resize_ms = (_t_done  - _t_resize) * 1000
+            total_io_ms     += io_ms
+            total_isp_ms    += isp_ms
+            total_resize_ms += resize_ms
+            logger.debug(
+                "  %s: I/O=%.0fms ISP=%.0fms resize=%.0fms",
+                img_path.name, io_ms, isp_ms, resize_ms,
+            )
 
             # arr is float64 in [0, 1] (ISP + skimage_resize preserve this range)
             arrays.append(arr)
@@ -158,6 +177,15 @@ def _load_and_transform_raw_images(
 
     if not arrays:
         raise ValueError(f"No readable raw images found in {images_dir}")
+
+    n = len(arrays)
+    logger.info(
+        "Raw ISP timing (%d images): I/O=%.0fms (avg %.0f) | ISP=%.0fms (avg %.0f) | resize=%.0fms (avg %.0f)",
+        n,
+        total_io_ms,     total_io_ms / n,
+        total_isp_ms,    total_isp_ms / n,
+        total_resize_ms, total_resize_ms / n,
+    )
 
     return np.stack(arrays), labels, paths
 

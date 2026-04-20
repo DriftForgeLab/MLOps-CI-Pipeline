@@ -60,7 +60,7 @@ _PREPROCESSING_TOP_LEVEL_KEYS: set[str] = {
 }
 _IMAGE_KEYS: set[str] = {"target_size", "color_mode", "normalize", "flatten", "augmentation", "raw_input", "isp"}
 _IMAGE_AUGMENTATION_KEYS: set[str] = {"enabled", "horizontal_flip", "rotation_degrees", "augmentation_factor"}
-_ISP_KEYS: set[str] = {"black_level_correction", "demosaicing", "white_balance", "color_correction", "denoising", "sharpening", "gamma_correction"}
+_ISP_KEYS: set[str] = {"black_level_correction", "demosaicing", "white_balance", "color_correction", "denoising", "sharpening", "gamma_correction", "gpu_accelerated"}
 _ISP_BLACK_LEVEL_KEYS: set[str] = {"enabled", "black_level"}
 _ISP_DEMOSAICING_KEYS: set[str] = {"algorithm"}
 _ISP_WHITE_BALANCE_KEYS: set[str] = {"r_gain", "g_gain", "b_gain"}
@@ -270,6 +270,7 @@ class ISPConfig:
     denoising: ISPDenoisingConfig = field(default_factory=ISPDenoisingConfig)
     sharpening: ISPSharpeningConfig = field(default_factory=ISPSharpeningConfig)
     gamma_correction: ISPGammaConfig = field(default_factory=ISPGammaConfig)
+    gpu_accelerated: bool = False
 
 
 @dataclass(frozen=True)

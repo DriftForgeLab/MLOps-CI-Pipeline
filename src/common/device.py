@@ -1,10 +1,5 @@
 """Single torch device resolver for the project.
 
-All code paths that move tensors or models to a device should call
-``resolve_device()`` rather than constructing ``torch.device(...)`` directly,
-so the choice can be controlled by the ``MODEL_DEVICE`` environment variable
-and so the ``torch_directml`` import stays isolated to this module.
-
 MODEL_DEVICE values:
     auto      (default) — try CUDA, then DirectML, then CPU.
     cpu                  — force CPU.
@@ -21,8 +16,24 @@ import torch
 
 logger = logging.getLogger(__name__)
 
+_cached_device: torch.device | None = None
+
 
 def resolve_device() -> torch.device:
+    """Resolve the target device, caching the result for subsequent calls.
+
+    The device is determined once (based on MODEL_DEVICE env var and hardware
+    availability) and reused for the lifetime of the process. This avoids
+    repeated probe/log overhead when called per-image in ISP pipelines.
+    """
+    global _cached_device
+    if _cached_device is not None:
+        return _cached_device
+    _cached_device = _resolve_device_uncached()
+    return _cached_device
+
+
+def _resolve_device_uncached() -> torch.device:
     pref = os.getenv("MODEL_DEVICE", "auto").strip().lower()
 
     if pref == "cpu":

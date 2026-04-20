@@ -75,6 +75,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 import numpy as np
@@ -171,6 +172,7 @@ def run_isp(
     raw: np.ndarray,
     isp_config: ISPConfig,
     camera_params: dict | None = None,
+    profile: bool = False,
 ) -> np.ndarray:
     """Process a raw Bayer image through the full 7-step ISP pipeline.
 
@@ -183,6 +185,8 @@ def run_isp(
         isp_config:    Validated ISPConfig from preprocessing config.
         camera_params: Dict from read_camera_params(). If None, all parameters
                        must be set explicitly in isp_config.
+        profile:       If True, log per-stage wall-clock timings at INFO level.
+                       Use this to establish baseline measurements before GPU work.
 
     Returns:
         RGB image array of shape (H, W, 3), dtype float64, values in [0.0, 1.0].
@@ -193,6 +197,16 @@ def run_isp(
     """
     img = raw.astype(np.float64)
     params = camera_params or {}
+
+    _gpu_device = None
+    if isp_config.gpu_accelerated:
+        from src.common.device import resolve_device
+        _gpu_device = resolve_device()
+        if _gpu_device.type == "cpu":
+            _gpu_device = None  # no GPU available — fall back to CPU paths
+
+    if profile:
+        _t0 = _t = time.perf_counter()
 
     # --- Step 1: Black level correction ---
     if isp_config.black_level_correction.enabled:
@@ -209,13 +223,28 @@ def run_isp(
             )
         img = _black_level_correction(img, bl)
 
+    if profile:
+        _now = time.perf_counter()
+        logger.info("ISP step 1 black_level:  %.1f ms", (_now - _t) * 1000)
+        _t = _now
+
     # Normalize Bayer mosaic to [0, 1] before demosaicing
     img_max = img.max()
     if img_max > 0:
         img = img / img_max
 
     # --- Step 2: Demosaicing (Bayer → RGB) ---
-    img = _demosaicing(img, isp_config.demosaicing.algorithm)
+    # GPU path only supports bilinear; malvar2004/menon2007 always run on CPU.
+    if _gpu_device is not None and isp_config.demosaicing.algorithm == "bilinear":
+        from src.data.isp_gpu import gpu_demosaic_bilinear
+        img = gpu_demosaic_bilinear(img, _gpu_device)
+    else:
+        img = _demosaicing(img, isp_config.demosaicing.algorithm)
+
+    if profile:
+        _now = time.perf_counter()
+        logger.info("ISP step 2 demosaicing:  %.1f ms", (_now - _t) * 1000)
+        _t = _now
 
     # --- Step 3: White balance ---
     wb_cfg = isp_config.white_balance
@@ -224,6 +253,11 @@ def run_isp(
     g_gain = wb_cfg.g_gain if wb_cfg.g_gain is not None else dng_wb[1]
     b_gain = wb_cfg.b_gain if wb_cfg.b_gain is not None else dng_wb[2]
     img = _white_balance(img, [r_gain, g_gain, b_gain])
+
+    if profile:
+        _now = time.perf_counter()
+        logger.info("ISP step 3 white_balance: %.1f ms", (_now - _t) * 1000)
+        _t = _now
 
     # --- Step 4: Color correction ---
     if isp_config.color_correction.enabled:
@@ -240,22 +274,65 @@ def run_isp(
             matrix = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
         img = _color_correction(img, matrix)
 
-    # --- Step 5: Denoising ---
-    if isp_config.denoising.algorithm != "none":
-        img = _denoising(img, isp_config.denoising.algorithm, isp_config.denoising.strength)
+    if profile:
+        _now = time.perf_counter()
+        logger.info("ISP step 4 color_correction: %.1f ms", (_now - _t) * 1000)
+        _t = _now
 
-    # --- Step 6: Sharpening ---
-    if isp_config.sharpening.algorithm != "none":
-        img = _sharpening(
+    # --- Steps 5 + 6: Denoising + Sharpening ---
+    # When gpu_accelerated=True and both steps are active, run them fused on GPU
+    # (single YUV roundtrip). Otherwise fall back to separate CPU steps.
+    _denoise_on = isp_config.denoising.algorithm != "none"
+    _sharpen_on = isp_config.sharpening.algorithm != "none"
+
+    _use_gpu_fused = (
+        _gpu_device is not None
+        and _denoise_on
+        and _sharpen_on
+    )
+    _ran_gpu_fused = False
+    if _use_gpu_fused:
+        from src.data.isp_gpu import gpu_denoise_sharpen_fused
+        img = gpu_denoise_sharpen_fused(
             img,
+            isp_config.denoising.algorithm,
+            isp_config.denoising.strength,
             isp_config.sharpening.algorithm,
             isp_config.sharpening.radius,
             isp_config.sharpening.amount,
+            _gpu_device,
         )
+        _ran_gpu_fused = True
+    else:
+        if _gpu_device is None and isp_config.gpu_accelerated and _denoise_on and _sharpen_on:
+            logger.debug("gpu_accelerated=True but no GPU found; denoising+sharpening on CPU.")
+        if _denoise_on:
+            img = _denoising(img, isp_config.denoising.algorithm, isp_config.denoising.strength)
+        if _sharpen_on:
+            img = _sharpening(
+                img,
+                isp_config.sharpening.algorithm,
+                isp_config.sharpening.radius,
+                isp_config.sharpening.amount,
+            )
+
+    if profile:
+        _now = time.perf_counter()
+        logger.info(
+            "ISP step 5+6 denoise+sharpen: %.1f ms%s",
+            (_now - _t) * 1000,
+            " [GPU fused]" if _ran_gpu_fused else "",
+        )
+        _t = _now
 
     # --- Step 7: Gamma correction ---
     img = np.clip(img, 0.0, 1.0)
     img = _gamma_correction(img, isp_config.gamma_correction.gamma)
+
+    if profile:
+        _now = time.perf_counter()
+        logger.info("ISP step 7 gamma:        %.1f ms", (_now - _t) * 1000)
+        logger.info("ISP total:               %.1f ms", (_now - _t0) * 1000)
 
     return img
 
