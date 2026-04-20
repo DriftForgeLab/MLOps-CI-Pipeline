@@ -72,55 +72,6 @@ def _setup_logging(level_name: str) -> None:
         datefmt = "%Y-%m-%d %H:%M:%S", 
     )
 
-def _print_drift_adaptation_eval(result: dict) -> None:
-    """Print a before/after drift adaptation evaluation summary."""
-    baseline = result.get("baseline", {})
-    after = result.get("after_finetuning", {})
-    delta = result.get("delta", {})
-    improved = result.get("improved", False)
-    n = result.get("n_holdout_images", "?")
-
-    def _fmt(val) -> str:
-        return f"{val:.4f}" if isinstance(val, float) else str(val)
-
-    def _fmt_delta(key: str) -> str:
-        v = delta.get(key)
-        if v is None:
-            return "N/A"
-        sign = "+" if v >= 0 else ""
-        return f"{sign}{v:.4f}"
-
-    print()
-    print("=" * 62)
-    print("  DRIFT ADAPTATION EVALUATION")
-    print("=" * 62)
-    print(f"\n  Held-out drifted images evaluated: {n}")
-    print()
-    print(f"  {'Metric':<12}  {'Before':>10}  {'After':>10}  {'Delta':>10}")
-    print(f"  {'-'*12}  {'-'*10}  {'-'*10}  {'-'*10}")
-    for key, label in [
-        ("accuracy",  "Accuracy"),
-        ("f1_score",  "F1 score"),
-        ("precision", "Precision"),
-        ("recall",    "Recall"),
-    ]:
-        b = _fmt(baseline.get(key, "N/A"))
-        a = _fmt(after.get(key, "N/A"))
-        d = _fmt_delta(key)
-        print(f"  {label:<12}  {b:>10}  {a:>10}  {d:>10}")
-
-    print()
-    verdict = "IMPROVED" if improved else "NO IMPROVEMENT"
-    detail = (
-        "fine-tuning improved performance on drifted images."
-        if improved
-        else "fine-tuning did not improve performance on the drifted holdout."
-    )
-    print(f"  Result: {verdict} — {detail}")
-    print()
-    print("=" * 62)
-
-
 def main() -> None:
     _setup_logging("INFO")
     args = _parse_args()
@@ -236,26 +187,6 @@ def main() -> None:
         if mlflow.active_run():
             mlflow.set_tag("pipeline.overall_status", overall_status)
             mlflow.log_artifact(str(output_report_path), artifact_path="outputs")
-
-        # --- Drift adaptation evaluation (fine-tune runs only) ---
-        # Evaluates the fine-tuned model on the held-out drifted images saved
-        # by prepare-drift-training, and prints a before/after comparison.
-        # Skips silently if prepare-drift-training was not run beforehand.
-        if fine_tune and overall_status == "completed":
-            drift_eval = run_drift_adaptation_eval(config, version_id)
-            if drift_eval is not None:
-                _print_drift_adaptation_eval(drift_eval)
-                eval_path = Path(config.output_dir) / "drift_adaptation_eval.json"
-                atomic_write_json(eval_path, drift_eval)
-                logger.info("Drift adaptation eval written to %s", eval_path)
-                if mlflow.active_run():
-                    for key, val in drift_eval.get("delta", {}).items():
-                        mlflow.log_metric(f"drift_adapt.delta_{key}", val)
-                    mlflow.log_metric(
-                        "drift_adapt.after_accuracy",
-                        drift_eval["after_finetuning"].get("accuracy", 0.0),
-                    )
-                    mlflow.log_artifact(str(eval_path), artifact_path="outputs")
     finally:
         mlflow.end_run()
 

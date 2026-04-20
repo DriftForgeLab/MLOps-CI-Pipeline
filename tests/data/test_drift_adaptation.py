@@ -13,6 +13,8 @@ from PIL import Image
 
 from src.data.drift_adaptation import (
     _BASELINE_FILENAME,
+    _load_holdout_image_raw,
+    _load_holdout_image_standard,
     copy_training_images_to_dataset,
     evaluate_on_holdout_dir,
     load_baseline_metrics,
@@ -303,6 +305,169 @@ class TestEvaluateOnHoldoutDir:
         result = evaluate_on_holdout_dir(model, holdout_dir, _fake_prep_config(), None, None, c2i)
         # Only cats counted
         assert result["n_samples"] == 2
+
+
+# ---------------------------------------------------------------------------
+# _load_holdout_image_standard / _load_holdout_image_raw
+# ---------------------------------------------------------------------------
+
+class TestLoadHoldoutImageStandard:
+
+    def test_loads_rgb_image_to_float64(self, tmp_path):
+        img_path = tmp_path / "img.png"
+        _make_image(img_path, size=(8, 8))
+        cfg = _fake_prep_config(target_size=(8, 8), color_mode="rgb", normalize=True)
+        arr = _load_holdout_image_standard(img_path, cfg.image)
+        assert arr is not None
+        assert arr.dtype == np.float64
+        assert arr.shape == (8, 8, 3)
+
+    def test_normalize_true_scales_to_01(self, tmp_path):
+        img_path = tmp_path / "img.png"
+        _make_image(img_path, size=(8, 8))
+        cfg = _fake_prep_config(normalize=True)
+        arr = _load_holdout_image_standard(img_path, cfg.image)
+        assert arr.max() <= 1.0
+        assert arr.min() >= 0.0
+
+    def test_normalize_false_keeps_255_range(self, tmp_path):
+        """When normalize=False the image should not be divided by 255."""
+        from PIL import Image as PILImage
+        img_path = tmp_path / "img.png"
+        arr_255 = np.full((8, 8, 3), 128, dtype=np.uint8)
+        PILImage.fromarray(arr_255).save(img_path)
+        cfg = _fake_prep_config(normalize=False)
+        arr = _load_holdout_image_standard(img_path, cfg.image)
+        assert arr is not None
+        assert arr.max() > 1.0  # still in [0, 255] range
+
+    def test_returns_none_on_unreadable_file(self, tmp_path):
+        bad_path = tmp_path / "bad.png"
+        bad_path.write_bytes(b"not an image")
+        cfg = _fake_prep_config()
+        result = _load_holdout_image_standard(bad_path, cfg.image)
+        assert result is None
+
+
+class TestLoadHoldoutImageRaw:
+    """Test the RAW DNG loading path with mocked rawpy and ISP pipeline."""
+
+    def _make_raw_prep_config(self, target_size=(8, 8)):
+        from unittest.mock import MagicMock
+        img = MagicMock()
+        img.target_size = target_size
+        img.color_mode = "rgb"
+        img.normalize = True
+        img.raw_input = True
+        img.isp = MagicMock()
+        cfg = MagicMock()
+        cfg.image = img
+        return cfg
+
+    def test_raw_loading_returns_float64_array(self, tmp_path):
+        from unittest.mock import MagicMock, patch
+        img_path = tmp_path / "DJI_0001_drifted.DNG"
+        img_path.write_bytes(b"fake dng")
+
+        fake_raw = MagicMock()
+        fake_raw.raw_image_visible = np.zeros((16, 16), dtype=np.uint16)
+        fake_raw.__enter__ = lambda s: s
+        fake_raw.__exit__ = MagicMock(return_value=False)
+
+        rgb_output = np.zeros((8, 8, 3), dtype=np.float64)
+
+        cfg = self._make_raw_prep_config(target_size=(8, 8))
+
+        with patch("rawpy.imread", return_value=fake_raw), \
+             patch("src.data.isp_pipeline.run_isp", return_value=rgb_output), \
+             patch("src.data.isp_pipeline.read_camera_params", return_value={}):
+            arr = _load_holdout_image_raw(img_path, cfg.image)
+
+        assert arr is not None
+        assert arr.dtype == np.float64
+        assert arr.shape == (8, 8, 3)
+
+    def test_raw_loading_returns_none_on_error(self, tmp_path):
+        from unittest.mock import patch
+        img_path = tmp_path / "DJI_0001.DNG"
+        img_path.write_bytes(b"bad")
+        cfg = self._make_raw_prep_config()
+
+        with patch("rawpy.imread", side_effect=Exception("read failed")):
+            result = _load_holdout_image_raw(img_path, cfg.image)
+        assert result is None
+
+    def test_missing_rawpy_raises_import_error(self, tmp_path):
+        import sys
+        img_path = tmp_path / "img.DNG"
+        img_path.write_bytes(b"fake")
+        cfg = self._make_raw_prep_config()
+
+        # Temporarily make rawpy unimportable
+        original = sys.modules.get("rawpy")
+        sys.modules["rawpy"] = None  # type: ignore
+        try:
+            with pytest.raises(ImportError, match="rawpy"):
+                _load_holdout_image_raw(img_path, cfg.image)
+        finally:
+            if original is None:
+                sys.modules.pop("rawpy", None)
+            else:
+                sys.modules["rawpy"] = original
+
+
+class TestEvaluateOnHoldoutDirRaw:
+    """Test evaluate_on_holdout_dir dispatches to the RAW loading path."""
+
+    def _raw_prep_config(self, target_size=(8, 8)):
+        from unittest.mock import MagicMock
+        img = MagicMock()
+        img.target_size = target_size
+        img.color_mode = "rgb"
+        img.normalize = True
+        img.raw_input = True
+        img.isp = MagicMock()
+        cfg = MagicMock()
+        cfg.image = img
+        return cfg
+
+    def test_raw_path_called_when_raw_input_true(self, tmp_path):
+        from unittest.mock import MagicMock, patch
+        holdout_dir = tmp_path / "holdout"
+        (holdout_dir / "scene_a").mkdir(parents=True)
+        (holdout_dir / "scene_a" / "DJI_drifted.DNG").write_bytes(b"fake")
+
+        fake_arr = np.zeros((8, 8, 3), dtype=np.float64)
+        model = MagicMock()
+        model.predict = MagicMock(return_value=np.zeros(1, dtype=np.int64))
+        c2i = {"scene_a": 0}
+        cfg = self._raw_prep_config()
+
+        with patch("src.data.drift_adaptation._load_holdout_image_raw", return_value=fake_arr) as mock_raw, \
+             patch("src.data.drift_adaptation._load_holdout_image_standard") as mock_std:
+            evaluate_on_holdout_dir(model, holdout_dir, cfg, None, None, c2i)
+
+        mock_raw.assert_called_once()
+        mock_std.assert_not_called()
+
+    def test_standard_path_called_when_raw_input_false(self, tmp_path):
+        from unittest.mock import MagicMock, patch
+        holdout_dir = tmp_path / "holdout"
+        (holdout_dir / "cats").mkdir(parents=True)
+        _make_image(holdout_dir / "cats" / "cat_drifted.png")
+
+        fake_arr = np.zeros((8, 8, 3), dtype=np.float64)
+        model = MagicMock()
+        model.predict = MagicMock(return_value=np.zeros(1, dtype=np.int64))
+        c2i = {"cats": 0}
+        cfg = _fake_prep_config()  # raw_input=False
+
+        with patch("src.data.drift_adaptation._load_holdout_image_raw") as mock_raw, \
+             patch("src.data.drift_adaptation._load_holdout_image_standard", return_value=fake_arr) as mock_std:
+            evaluate_on_holdout_dir(model, holdout_dir, cfg, None, None, c2i)
+
+        mock_std.assert_called_once()
+        mock_raw.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

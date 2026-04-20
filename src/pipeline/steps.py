@@ -429,7 +429,19 @@ def _promotion_stage(config: PipelineConfig, version_id: str) -> None:
             drift.get("overall", {}).get("severity", "unknown"),
         )
 
-    result = request_approval(report, drift=drift)
+    # Load drift adaptation eval if present — written just before this stage
+    # runs on fine-tune runs so the before/after holdout comparison is available
+    # to the user when they make the promotion decision.
+    drift_eval: dict | None = None
+    drift_eval_path = Path(config.output_dir) / "drift_adaptation_eval.json"
+    if drift_eval_path.exists():
+        try:
+            with open(drift_eval_path) as f:
+                drift_eval = json.load(f)
+        except Exception as _de_exc:
+            logger.debug("Could not load drift_adaptation_eval.json: %s", _de_exc)
+
+    result = request_approval(report, drift=drift, drift_eval=drift_eval)
 
     mlflow_run_id = mlflow.active_run().info.run_id if mlflow.active_run() else None
     decision = {

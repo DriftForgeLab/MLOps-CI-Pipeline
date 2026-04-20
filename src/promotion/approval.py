@@ -31,7 +31,11 @@ class ApprovalResult:
     reason: str | None = None
 
 
-def request_approval(report: dict, drift: dict | None = None) -> ApprovalResult:
+def request_approval(
+    report: dict,
+    drift: dict | None = None,
+    drift_eval: dict | None = None,
+) -> ApprovalResult:
     """
     Display a promotion summary and request explicit user approval via CLI.
 
@@ -40,14 +44,18 @@ def request_approval(report: dict, drift: dict | None = None) -> ApprovalResult:
     cancellation and the pipeline stops.
 
     Args:
-        report: The evaluation report dict produced by evaluate.py.
-        drift:  Optional drift result dict (from drift_result.json). When
-                provided, a drift status block is rendered inside the summary.
+        report:     The evaluation report dict produced by evaluate.py.
+        drift:      Optional drift result dict (from drift_result.json). When
+                    provided, a drift status block is rendered inside the summary.
+        drift_eval: Optional drift adaptation evaluation dict (from
+                    drift_adaptation_eval.json). When provided, a before/after
+                    holdout performance comparison is rendered so the user can
+                    factor fine-tuning improvement into their promotion decision.
 
     Returns:
         ApprovalResult with approved=True, or approved=False with a reason.
     """
-    _print_summary(report, drift=drift)
+    _print_summary(report, drift=drift, drift_eval=drift_eval)
 
     print("\nManual approval required.")
     print("  [1] Approve — promote candidate to production")
@@ -79,7 +87,11 @@ def request_approval(report: dict, drift: dict | None = None) -> ApprovalResult:
     return ApprovalResult(approved=False, reason=None)
 
 
-def _print_summary(report: dict, drift: dict | None = None) -> None:
+def _print_summary(
+    report: dict,
+    drift: dict | None = None,
+    drift_eval: dict | None = None,
+) -> None:
     """Print a human-readable promotion summary to stdout."""
     metrics = report.get("metrics", {})
     comparison = report.get("comparison", {})
@@ -111,7 +123,50 @@ def _print_summary(report: dict, drift: dict | None = None) -> None:
                 else:
                     print(f"    {metric_name:<20} {'N/A':<10}  ({verdict})")
 
+    if drift_eval is not None:
+        _print_drift_eval_block(drift_eval)
+
     print("\n" + "=" * 60)
+
+
+def _print_drift_eval_block(drift_eval: dict) -> None:
+    """Render the drift adaptation evaluation block inside the promotion summary.
+
+    Shows before/after accuracy on the held-out drifted images so the user
+    can factor fine-tuning improvement into their promotion decision.
+    """
+    baseline = drift_eval.get("baseline", {})
+    after    = drift_eval.get("after_finetuning", {})
+    delta    = drift_eval.get("delta", {})
+    improved = drift_eval.get("improved", False)
+    n        = drift_eval.get("n_holdout_images", "?")
+
+    def _fmt(v) -> str:
+        return f"{v:.4f}" if isinstance(v, float) else "N/A"
+
+    def _fmt_delta(key: str) -> str:
+        v = delta.get(key)
+        if v is None:
+            return "N/A"
+        return f"{'+'if v >= 0 else ''}{v:.4f}"
+
+    print("\n" + "-" * 60)
+    print(f"  DRIFT ADAPTATION  (holdout: {n} drifted images)")
+    print("-" * 60)
+    print(f"\n  {'Metric':<12}  {'Before':>10}  {'After':>10}  {'Delta':>10}")
+    print(f"  {'-'*12}  {'-'*10}  {'-'*10}  {'-'*10}")
+    for key, label in [
+        ("accuracy",  "Accuracy"),
+        ("f1_score",  "F1 score"),
+        ("precision", "Precision"),
+        ("recall",    "Recall"),
+    ]:
+        print(
+            f"  {label:<12}  {_fmt(baseline.get(key)):>10}"
+            f"  {_fmt(after.get(key)):>10}  {_fmt_delta(key):>10}"
+        )
+    verdict = "IMPROVED" if improved else "NO IMPROVEMENT"
+    print(f"\n  Result: {verdict}")
 
 
 def _print_drift_block(drift: dict | None) -> None:
