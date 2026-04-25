@@ -1,9 +1,19 @@
+# =============================================================================
+# src/config/training_regression.yaml — Regression training configuration
+# =============================================================================
+# Algorithm: Random Forest Regressor (sklearn.ensemble.RandomForestRegressor)
+# Dataset:   California Housing (20,640 rows, 8 numeric features)
+#
+# Expected performance on California Housing (validation split, seed=42):
+#   R²   ≈ 0.81    (promotion gate: >= 0.75)
+#   MAE  ≈ 0.38    (promotion gate: <= 0.55, in $100k units)
+#   RMSE ≈ 0.52    (informational only)
+# =============================================================================
 
-# Regression training configuration — Random Forest
 model:
   algorithm: random_forest
   hyperparameters:
-    n_estimators: 100
-    max_depth: null
-    min_samples_split: 2
-    class_weight: null
+    n_estimators: 100       # number of trees — 100 is standard; increase for marginal gains
+    max_depth: null         # null = grow until leaves are pure (default RF behaviour)
+    min_samples_split: 2    # minimum samples to split an internal node
+    class_weight: null      # not applicable for regression; kept for schema compatibility

@@ -432,9 +432,12 @@ def _promotion_stage(config: PipelineConfig, version_id: str) -> None:
     # Load drift adaptation eval if present — written just before this stage
     # runs on fine-tune runs so the before/after holdout comparison is available
     # to the user when they make the promotion decision.
+    # Guard: only applicable to image pipelines. Tabular pipelines share the
+    # same output directory and must not pick up a stale file from a prior
+    # image run.
     drift_eval: dict | None = None
     drift_eval_path = Path(config.output_dir) / "drift_adaptation_eval.json"
-    if drift_eval_path.exists():
+    if config.task_type in IMAGE_TASK_TYPES and drift_eval_path.exists():
         try:
             with open(drift_eval_path) as f:
                 drift_eval = json.load(f)

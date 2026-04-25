@@ -23,12 +23,12 @@ regression:
   rules:
     - id: "min_r2"
       metric: "r2"
-      threshold: 0.70
+      threshold: 0.75
       operator: ">="
-      description: "R² must be at least 0.70"
+      description: "R² must be at least 0.75 (Random Forest on California Housing typically achieves ~0.81)"
 
     - id: "max_mae"
       metric: "mae"
-      threshold: 1.0
+      threshold: 0.55
       operator: "<="
-      description: "MAE must not exceed 1.0"
+      description: "MAE must not exceed 0.55 in $100k units (Random Forest on California Housing typically achieves ~0.38)"

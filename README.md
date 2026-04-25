@@ -37,7 +37,10 @@ All commands become available after `pip install -e .`.
 Runs the full pipeline: versioning → validation → split → preprocessing → training → evaluation → promotion. All data preparation is handled automatically.
 
 ```bash
-# Tabular classification (CSV datasets)
+# Tabular regression — Random Forest on California Housing
+run-pipeline --config src/config/pipeline_regression.yaml
+
+# Tabular classification — Random Forest on Iris
 run-pipeline --config src/config/pipeline_tabular.yaml
 
 # Image classification — CNN with PyTorch (JPG/PNG)
@@ -92,6 +95,9 @@ monitor-drift \
     --config src/config/pipeline_tabular.yaml \
     --dataset-version abc123hash
 ```
+
+For the regression pipeline, replace `--config` with `src/config/pipeline_regression.yaml`
+and `--model-name` with the registered model name (default: `lightweight-mlops-pipeline-regression`).
 
 Results are saved as JSON in `outputs/drift_monitoring/<model-name>/`. If drift severity
 meets the configured threshold, you will be prompted to choose a response action.
@@ -203,9 +209,9 @@ Open `http://localhost:5000` in a browser.
 |------------------|--------------------|---------------------------------------------------------------------------------------------------|
 | `preprocessing`  | all                | Selects features, normalises, writes `preprocessed/` (CSV or NPZ)                                |
 | `training`       | all                | Trains the model defined in `training_*.yaml`; saves artifact to registry                         |
-| `evaluation`     | all                | Computes metrics (accuracy, F1, etc.) against the held-out test split                             |
+| `evaluation`     | all                | Computes metrics against the held-out val split. Classification: accuracy, F1, precision, recall. Regression: MAE, MSE, RMSE, R². All metrics are logged to MLflow. |
 | `model_analysis` | image only         | **Raw images:** ISP sensitivity analysis — pre-computes scenario signatures for `monitor-drift-image`. **Standard images:** augmentation robustness — measures how much each transformation degrades accuracy before deployment. |
-| `promotion`      | all                | Promotes model to Production if promotion rules pass; requests approval if configured             |
+| `promotion`      | all                | Promotes model to Production if promotion rules pass; requests approval if configured. Regression gates: R² ≥ 0.75 and MAE ≤ 0.55. |
 
 The `model_analysis` stage is **offline pre-deployment analysis**, not drift detection.
 Drift detection — comparing the training reference against new production data over time — runs

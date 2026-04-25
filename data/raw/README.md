@@ -6,6 +6,24 @@ image files are excluded (see below).
 
 ## Datasets
 
+### california_housing (`data/raw/california_housing/`)
+Tabular regression dataset. `data.csv` is tracked in git.
+
+- **Task:** Regression — predict median house value (`MedHouseVal`) in $100k units
+- **Source:** `sklearn.datasets.fetch_california_housing()` (Pace & Barry, 1997)
+- **Rows:** 20,640 | **Features:** 8 numeric (MedInc, HouseAge, AveRooms, AveBedrms, Population, AveOccup, Latitude, Longitude)
+- **No missing values, no categorical features** — preprocessing is column-selection + optional scaling only
+- **Pipeline config:** `src/config/pipeline_regression.yaml`
+- **Expected RF performance (val split):** R² ≈ 0.81, MAE ≈ 0.38, RMSE ≈ 0.52
+- **Promotion gates:** R² ≥ 0.75 and MAE ≤ 0.55 (configured in `src/config/promotion.yaml`)
+
+To regenerate `data.csv` from scratch:
+```python
+from sklearn.datasets import fetch_california_housing
+import pandas as pd
+fetch_california_housing(as_frame=True).frame.to_csv("data/raw/california_housing/data.csv", index=False)
+```
+
 ### iris (`data/raw/iris/`)
 Tabular classification dataset. `data.csv` is tracked in git.
 

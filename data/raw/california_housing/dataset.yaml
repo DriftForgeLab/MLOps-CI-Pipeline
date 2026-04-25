@@ -1,0 +1,48 @@
+# =============================================================================
+# data/raw/california_housing/dataset.yaml — Dataset contract
+# =============================================================================
+# California Housing dataset from sklearn.datasets.fetch_california_housing().
+# Task: regression — predict median house value (MedHouseVal) in $100k units.
+#
+# Accessed via: sklearn.datasets.fetch_california_housing()
+#
+# Features: 8 numeric (no categorical columns — no encoding needed)
+# Target:   MedHouseVal — median house value in $100k (range 0.15–5.00)
+# Rows:     20,640 (no missing values)
+# =============================================================================
+
+name: california_housing
+task_type: regression
+description: >
+  California Housing dataset. Predict median house value (in $100k) for
+  California census block groups using 8 socio-economic and geographic features.
+  All features are numeric; no categorical encoding is required.
+source: scikit-learn (sklearn.datasets.fetch_california_housing)
+created_at: '2026-04-25'
+
+features:
+  - MedInc
+  - HouseAge
+  - AveRooms
+  - AveBedrms
+  - Population
+  - AveOccup
+  - Latitude
+  - Longitude
+
+target: MedHouseVal
+
+schema:
+  MedInc: float       # Median income in block group (tens of thousands USD)
+  HouseAge: float     # Median house age in block group (years)
+  AveRooms: float     # Average number of rooms per household
+  AveBedrms: float    # Average number of bedrooms per household
+  Population: float   # Block group population
+  AveOccup: float     # Average number of household members
+  Latitude: float     # Block group latitude
+  Longitude: float    # Block group longitude
+  MedHouseVal: float  # Median house value in $100k (target)
+
+constraints:
+  min_rows: 10
+  max_null_fraction: 0.0
