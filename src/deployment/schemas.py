@@ -24,3 +24,4 @@ class PredictionResponse(BaseModel):
     model_version_id: str
     algorithm: str
     task_type: str
+    note: str | None = None

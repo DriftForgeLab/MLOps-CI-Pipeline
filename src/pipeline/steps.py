@@ -99,12 +99,8 @@ def _preprocessing_stage(config: PipelineConfig, version_id: str) -> None:
 
 def _training_stage(config: PipelineConfig, version_id: str, fine_tune: bool = False) -> None:
     if config.task_type == "classification":
-        if fine_tune:
-            logger.info("  --fine-tune has no effect for task_type='classification' (random forest has no weights) — training from scratch.")
         result = run_classification_training(config, version_id)
     elif config.task_type == "regression":
-        if fine_tune:
-            logger.info("  --fine-tune has no effect for task_type='regression' (random forest has no weights) — training from scratch.")
         result = run_regression_training(config, version_id)
     elif config.task_type == "image_classification_cnn":
         from src.training.image_classification_cnn.train import run_training as run_cnn_training
@@ -430,17 +426,23 @@ def _promotion_stage(config: PipelineConfig, version_id: str) -> None:
         )
 
     # Load drift adaptation eval if present — written just before this stage
-    # runs on fine-tune runs so the before/after holdout comparison is available
-    # to the user when they make the promotion decision.
-    # Guard: only applicable to image pipelines. Tabular pipelines share the
-    # same output directory and must not pick up a stale file from a prior
-    # image run.
+    # runs so the before/after holdout comparison is available to the user when
+    # they make the promotion decision. Guard on task_type to prevent a stale
+    # file from a prior run of a different pipeline type being picked up.
     drift_eval: dict | None = None
     drift_eval_path = Path(config.output_dir) / "drift_adaptation_eval.json"
-    if config.task_type in IMAGE_TASK_TYPES and drift_eval_path.exists():
+    if drift_eval_path.exists():
         try:
             with open(drift_eval_path) as f:
-                drift_eval = json.load(f)
+                candidate = json.load(f)
+            eval_task_type = candidate.get("task_type")
+            if eval_task_type == config.task_type:
+                drift_eval = candidate
+            else:
+                logger.debug(
+                    "drift_adaptation_eval.json is from a '%s' run — ignoring for current '%s' run.",
+                    eval_task_type, config.task_type,
+                )
         except Exception as _de_exc:
             logger.debug("Could not load drift_adaptation_eval.json: %s", _de_exc)
 
@@ -488,26 +490,44 @@ def run_drift_adaptation_eval(
     config: PipelineConfig,
     version_id: str,
 ) -> dict | None:
-    """Evaluate the fine-tuned model on the held-out drifted images.
+    """Evaluate the retrained/fine-tuned model on the held-out drifted data.
 
+    Dispatches to an image or tabular evaluation based on config.task_type.
     Looks for a holdout set at data/evaluation/drifted_holdout/<dataset>/ and
-    baseline metrics from a prior prepare-drift-training run. If both are
-    present, evaluates the newly trained model on the holdout and returns a
-    structured comparison report.
+    baseline metrics from a prior prepare-drift-training[/tabular] run. If both
+    are present, evaluates the newly trained model and returns a before/after
+    comparison report.
 
-    Skips silently (returns None) when:
-      - No holdout directory exists (prepare-drift-training was not run).
-      - No baseline metrics file exists.
-      - The holdout directory contains no images.
+    Skips silently (returns None) when no holdout or baseline exists.
 
     Args:
         config:     Pipeline config for the current run.
-        version_id: Dataset/model version hash for the fine-tuned model.
+        version_id: Dataset/model version hash for the retrained model.
 
     Returns:
-        Dict with keys "baseline", "after_finetuning", "delta", and
-        "improved" (bool), or None if the evaluation was skipped.
+        Dict with keys "task_type", "baseline", "after_finetuning", "delta",
+        and "improved" (bool), or None if the evaluation was skipped.
     """
+    holdout_dir = Path(config.data.evaluation) / "drifted_holdout" / config.dataset
+    if not holdout_dir.exists():
+        logger.debug(
+            "No drifted holdout directory found at '%s' — skipping drift adaptation eval.",
+            holdout_dir,
+        )
+        return None
+
+    if config.task_type in IMAGE_TASK_TYPES:
+        return _run_image_drift_adaptation_eval(config, version_id, holdout_dir)
+    else:
+        return _run_tabular_drift_adaptation_eval(config, version_id, holdout_dir)
+
+
+def _run_image_drift_adaptation_eval(
+    config: PipelineConfig,
+    version_id: str,
+    holdout_dir: Path,
+) -> dict | None:
+    """Image CNN drift adaptation evaluation (holdout images → .pt model)."""
     from src.data.drift_adaptation import (
         evaluate_on_holdout_dir,
         load_baseline_metrics,
@@ -517,23 +537,14 @@ def run_drift_adaptation_eval(
     from src.config.loader import load_preprocessing_config
     from src.data.prepare_batch import load_training_stats
 
-    holdout_dir = Path(config.data.evaluation) / "drifted_holdout" / config.dataset
-    if not holdout_dir.exists():
-        logger.debug(
-            "No drifted holdout directory found at '%s' — skipping drift adaptation eval.",
-            holdout_dir,
-        )
-        return None
-
     baseline_payload = load_baseline_metrics(holdout_dir)
     if baseline_payload is None:
         logger.debug(
-            "No baseline metrics found in '%s' — skipping drift adaptation eval.",
+            "No baseline metrics found in '%s' — skipping image drift adaptation eval.",
             holdout_dir,
         )
         return None
 
-    # Load fine-tuned model (from this run's version_id)
     model_pt = Path("artifacts/runs") / version_id / "model" / "model.pt"
     if not model_pt.exists():
         logger.warning(
@@ -549,10 +560,6 @@ def run_drift_adaptation_eval(
         logger.warning("Could not load fine-tuned model for drift eval: %s", e)
         return None
 
-    # Load preprocessing config, normalization stats, and class mapping.
-    # Prefer the normalization stats saved by prepare-drift-training (from the
-    # original dataset version) so that the baseline and post-fine-tuning
-    # evaluations use identical scaling even when the dataset version changed.
     try:
         prep_config = load_preprocessing_config(Path(config.configs.preprocessing))
         processed_dir = Path(config.data.processed)
@@ -566,7 +573,6 @@ def run_drift_adaptation_eval(
         logger.warning("Could not load preprocessing info for drift eval: %s", e)
         return None
 
-    # Evaluate fine-tuned model on holdout
     try:
         after_metrics = evaluate_on_holdout_dir(
             model, holdout_dir, prep_config, norm_mean, norm_std, class_to_index
@@ -581,11 +587,94 @@ def run_drift_adaptation_eval(
         for key in ("accuracy", "f1_score", "precision", "recall")
         if key in after_metrics and key in baseline_metrics
     }
-    improved = delta.get("accuracy", 0.0) > 0.0
+    return {
+        "task_type": config.task_type,
+        "holdout_dir": str(holdout_dir),
+        "n_holdout_samples": after_metrics["n_samples"],
+        "baseline": baseline_metrics,
+        "after_finetuning": after_metrics,
+        "delta": delta,
+        "improved": delta.get("accuracy", 0.0) > 0.0,
+    }
+
+
+def _run_tabular_drift_adaptation_eval(
+    config: PipelineConfig,
+    version_id: str,
+    holdout_dir: Path,
+) -> dict | None:
+    """Tabular drift adaptation evaluation (holdout.csv → .joblib model)."""
+    from src.data.tabular_drift_adaptation import (
+        load_baseline_metrics,
+        load_holdout_csv,
+        load_feature_contract,
+        evaluate_on_holdout_tabular,
+    )
+
+    baseline_payload = load_baseline_metrics(holdout_dir)
+    if baseline_payload is None:
+        logger.debug(
+            "No baseline metrics found in '%s' — skipping tabular drift adaptation eval.",
+            holdout_dir,
+        )
+        return None
+
+    holdout_df = load_holdout_csv(holdout_dir)
+    if holdout_df is None or len(holdout_df) == 0:
+        logger.debug(
+            "Holdout CSV not found or empty in '%s' — skipping tabular drift adaptation eval.",
+            holdout_dir,
+        )
+        return None
+
+    model_path = Path("artifacts/runs") / version_id / "model" / "model.joblib"
+    if not model_path.exists():
+        logger.warning(
+            "Retrained model not found at '%s' — skipping drift adaptation eval.",
+            model_path,
+        )
+        return None
+
+    try:
+        import joblib
+        model = joblib.load(model_path)
+    except Exception as e:
+        logger.warning("Could not load retrained model for drift eval: %s", e)
+        return None
+
+    # Use the NEW version's pipeline so the retrained model is evaluated with
+    # the preprocessing it was trained on (fitted on original + drifted data).
+    try:
+        feature_contract = load_feature_contract(
+            Path(config.data.processed), config.dataset, version_id
+        )
+    except Exception as e:
+        logger.warning("Could not load feature contract for drift eval: %s", e)
+        return None
+
+    try:
+        after_metrics = evaluate_on_holdout_tabular(
+            model, holdout_df, feature_contract, config.task_type
+        )
+    except Exception as e:
+        logger.warning("Tabular holdout evaluation failed: %s", e)
+        return None
+
+    baseline_metrics = baseline_payload["metrics"]
+    metric_keys = set(after_metrics.keys()) & set(baseline_metrics.keys()) - {"n_samples"}
+    delta = {
+        key: round(after_metrics[key] - baseline_metrics[key], 4)
+        for key in metric_keys
+    }
+
+    # Primary improvement signal: accuracy for classification, r2 for regression
+    primary = "accuracy" if config.task_type == "classification" else "r2"
+    improved = delta.get(primary, 0.0) > 0.0
 
     return {
+        "task_type": config.task_type,
         "holdout_dir": str(holdout_dir),
-        "n_holdout_images": after_metrics["n_samples"],
+        "n_holdout_samples": after_metrics["n_samples"],
         "baseline": baseline_metrics,
         "after_finetuning": after_metrics,
         "delta": delta,

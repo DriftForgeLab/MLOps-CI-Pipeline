@@ -1,11 +1,11 @@
 # =============================================================================
-# src/config/pipeline_regression.yaml — Tabular regression pipeline config
+# src/config/pipeline_tabular_regression.yaml — Tabular regression pipeline config
 # =============================================================================
 # Runs the full MLOps pipeline on the California Housing dataset with a
 # Random Forest regressor.
 #
 # Usage:
-#   run-pipeline --config src/config/pipeline_regression.yaml
+#   run-pipeline --config src/config/pipeline_tabular_regression.yaml
 #
 # Stages: preprocessing → training → evaluation → promotion
 # Metrics tracked in MLflow: eval.mae, eval.mse, eval.rmse, eval.r2

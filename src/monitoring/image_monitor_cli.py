@@ -13,12 +13,12 @@ Detection method is auto-selected based on pipeline type:
 ONE-STEP usage — standard JPG/PNG (preprocessing + monitoring in one command):
     monitor-drift-image \\
         --input-dir data/incoming/my_new_images \\
-        --config src/config/pipeline_image.yaml
+        --config src/config/pipeline_image_cnn.yaml
 
 ONE-STEP usage — raw-image pipeline with ISP scenario interpretation:
     monitor-drift-image \\
         --input-dir data/incoming/drone_batch_001 \\
-        --config src/config/pipeline_raw_image.yaml
+        --config src/config/pipeline_image_raw.yaml
 
     ISP scenario dir and sensitivity report are auto-resolved from
     data/drift_scenarios/<dataset>/<version_id>/ when not specified.
@@ -26,7 +26,7 @@ ONE-STEP usage — raw-image pipeline with ISP scenario interpretation:
 TWO-STEP usage (if batch NPZ already exists from prepare-image-batch):
     monitor-drift-image \\
         --batch-npz data/batches/my_batch.npz \\
-        --config src/config/pipeline_image.yaml
+        --config src/config/pipeline_image_cnn.yaml
 
 Exactly one of --input-dir or --batch-npz must be given.
 
@@ -141,7 +141,7 @@ def _parse_args() -> argparse.Namespace:
         "--config",
         type=str,
         required=True,
-        help="Path to pipeline config YAML (e.g. src/config/pipeline_image.yaml).",
+        help="Path to pipeline config YAML (e.g. src/config/pipeline_image_cnn.yaml).",
     )
     parser.add_argument(
         "--drift-config",

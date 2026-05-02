@@ -13,7 +13,7 @@ Tabular regression dataset. `data.csv` is tracked in git.
 - **Source:** `sklearn.datasets.fetch_california_housing()` (Pace & Barry, 1997)
 - **Rows:** 20,640 | **Features:** 8 numeric (MedInc, HouseAge, AveRooms, AveBedrms, Population, AveOccup, Latitude, Longitude)
 - **No missing values, no categorical features** — preprocessing is column-selection + optional scaling only
-- **Pipeline config:** `src/config/pipeline_regression.yaml`
+- **Pipeline config:** `src/config/pipeline_tabular_regression.yaml`
 - **Expected RF performance (val split):** R² ≈ 0.81, MAE ≈ 0.38, RMSE ≈ 0.52
 - **Promotion gates:** R² ≥ 0.75 and MAE ≤ 0.55 (configured in `src/config/promotion.yaml`)
 
@@ -62,7 +62,7 @@ data/raw/drone_raw/images/
     scene_a/    ← 6 files from step 1 (scene_a)
     scene_b/    ← 6 files from step 1 (scene_b)
 ```
-3. Run: `run-pipeline --config src/config/pipeline_raw_image.yaml`
+3. Run: `run-pipeline --config src/config/pipeline_image_raw.yaml`
 
 Note: Larger raw datasets are supported, but they require more storage, preprocessing time, and compute. In practice, large raw-image runs are better suited to local execution than routine execution in GitHub Actions.
 
@@ -89,7 +89,7 @@ data/raw/<dataset_name>/
 1. Create `data/raw/<name>/data.csv`
 2. Run the pipeline — it detects missing metadata and prompts for target column and task type:
 ```bash
-run-pipeline --config src/config/pipeline_tabular.yaml
+run-pipeline --config src/config/pipeline_tabular_classification.yaml
 ```
 
 ## Adding a New Image Dataset

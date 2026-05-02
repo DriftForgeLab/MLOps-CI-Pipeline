@@ -89,10 +89,20 @@ DRIFT_DECISION_OPTIONS: dict[str, str] = {
 # Ordered follow-up steps shown in the menu for each actionable option.
 # Use {config} as a placeholder for the pipeline config path.
 # Multi-step options (like fine_tune) show each step on its own line.
-_OPTION_STEPS: dict[str, list[str]] = {
+_OPTION_STEPS_IMAGE: dict[str, list[str]] = {
     "fine_tune": [
         "prepare-drift-training --drifted-dir data/batches/images/drifted --config {config}",
         "run-pipeline --config {config} --fine-tune",
+    ],
+    "retrain": [
+        "run-pipeline --config {config}",
+    ],
+}
+
+_OPTION_STEPS_TABULAR: dict[str, list[str]] = {
+    "fine_tune": [
+        "prepare-drift-training-tabular --drifted-csv data/batches/tabular/drifted.csv --config {config}",
+        "run-pipeline --config {config}",
     ],
     "retrain": [
         "run-pipeline --config {config}",
@@ -145,6 +155,7 @@ def request_drift_decision(
     drift_result: dict,
     is_image_isp: bool = False,
     is_image_cnn: bool = False,
+    is_tabular: bool = False,
     drift_report_linked: str = "drift_result.json",
     config_path: str | None = None,
 ) -> DriftDecision | None:
@@ -164,6 +175,8 @@ def request_drift_decision(
                              "adjust_isp" option and renders scenario table).
         is_image_cnn:        True for CNN image pipelines (adds the "fine_tune"
                              option with the run-pipeline --fine-tune command).
+        is_tabular:          True for tabular pipelines (adds the "fine_tune"
+                             option with the prepare-drift-training-tabular command).
         drift_report_linked: File name to embed in the decision for traceability.
                              Callers should pass the actual report file name.
         config_path:         Path to the pipeline config file, shown in the
@@ -174,12 +187,14 @@ def request_drift_decision(
     """
     _print_drift_summary(drift_result, is_image_isp=is_image_isp)
 
-    # Build the menu — fine_tune only for CNN image pipelines,
+    option_steps = _OPTION_STEPS_TABULAR if is_tabular else _OPTION_STEPS_IMAGE
+
+    # Build the menu — fine_tune for CNN image or tabular pipelines,
     #                  adjust_isp only for raw-ISP image drift
     menu: dict[str, tuple[str, str]] = {}
     idx = 1
     for key, label in DRIFT_DECISION_OPTIONS.items():
-        if key == "fine_tune" and not is_image_cnn:
+        if key == "fine_tune" and not (is_image_cnn or is_tabular):
             continue
         if key == "adjust_isp" and not is_image_isp:
             continue
@@ -190,15 +205,17 @@ def request_drift_decision(
     print("\nDrift response required.")
     for num, (key, label) in menu.items():
         print(f"  [{num}] {key:<14} — {label}")
-        if key in _OPTION_STEPS:
-            steps = _OPTION_STEPS[key]
+        if key in option_steps:
+            steps = option_steps[key]
             if len(steps) == 1:
                 print(f"       {'':14}   Command: {steps[0].format(config=cfg)}")
             else:
                 for i, step in enumerate(steps, 1):
                     print(f"       {'':14}   Step {i}: {step.format(config=cfg)}")
-                if key == "fine_tune":
+                if key == "fine_tune" and is_image_cnn:
                     print(f"       {'':14}   (Run: prepare-drift-training --help  for setup details)")
+                elif key == "fine_tune" and is_tabular:
+                    print(f"       {'':14}   (Run: prepare-drift-training-tabular --help  for setup details)")
     print("  [Q] Cancel        — Abort without logging a decision")
 
     try:

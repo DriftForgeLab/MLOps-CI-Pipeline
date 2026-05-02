@@ -6,29 +6,29 @@ whenever you have collected new images and want to check for data drift.
 Usage — minimal (auto-resolves dataset name and latest version from config):
     prepare-image-batch \\
         --input-dir data/incoming/my_new_images \\
-        --config src/config/pipeline_image.yaml
+        --config src/config/pipeline_image_cnn.yaml
 
 Usage — raw DNG images:
     prepare-image-batch \\
         --input-dir data/incoming/drone_batch_001 \\
-        --config src/config/pipeline_raw_image.yaml
+        --config src/config/pipeline_image_raw.yaml
 
 Usage — explicit dataset version:
     prepare-image-batch \\
         --input-dir data/incoming/my_new_images \\
-        --config src/config/pipeline_image.yaml \\
+        --config src/config/pipeline_image_cnn.yaml \\
         --dataset-version abc123hash
 
 Usage — explicit output path:
     prepare-image-batch \\
         --input-dir data/incoming/my_new_images \\
-        --config src/config/pipeline_image.yaml \\
+        --config src/config/pipeline_image_cnn.yaml \\
         --output-npz data/batches/my_batch.npz
 
 After running this command, pass the output NPZ to monitor-drift-image:
     monitor-drift-image \\
         --batch-npz data/batches/my_batch.npz \\
-        --config src/config/pipeline_image.yaml
+        --config src/config/pipeline_image_cnn.yaml
 
 Input directory structure:
     The input directory can be flat (all images in one folder) or ImageFolder
@@ -96,7 +96,7 @@ def _parse_args() -> argparse.Namespace:
         required=True,
         help=(
             "Path to the pipeline config YAML used during training "
-            "(e.g. src/config/pipeline_image.yaml or pipeline_raw_image.yaml). "
+            "(e.g. src/config/pipeline_image_cnn.yaml or pipeline_image_raw.yaml). "
             "Used to resolve dataset name, processed data dir, and preprocessing config."
         ),
     )

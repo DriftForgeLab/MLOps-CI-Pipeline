@@ -18,6 +18,7 @@ from src.config.schema import (
     RandomForestHyperparams,
     LogisticRegressionHyperparams,
     LinearRegressionHyperparams,
+    GradientBoostingHyperparams,
     CnnConvLayerConfig,
     CnnArchitectureConfig,
     CnnHyperparams,
@@ -125,6 +126,18 @@ def _validate_training(raw: dict) -> list[str]:
                 "Hyperparameters provided for linear_regression will be ignored: %s",
                 ", ".join(sorted(hp.keys())),
             )
+
+    elif algorithm == "gradient_boosting":
+        _GB_KEYS = {"max_iter", "learning_rate", "max_depth", "min_samples_leaf", "l2_regularization"}
+        unknown = set(hp.keys()) - _GB_KEYS
+        if unknown:
+            logger.warning("Unknown keys in 'hyperparameters' for gradient_boosting: %s", ", ".join(sorted(unknown)))
+        if "max_iter" in hp:
+            _validate_positive_int(hp["max_iter"], "hyperparameters.max_iter", errors)
+        if "max_depth" in hp and hp["max_depth"] is not None:
+            _validate_positive_int(hp["max_depth"], "hyperparameters.max_depth", errors, allow_null=True)
+        if "min_samples_leaf" in hp:
+            _validate_positive_int(hp["min_samples_leaf"], "hyperparameters.min_samples_leaf", errors)
 
     elif algorithm == "cnn":
         # --- Validate CNN hyperparameters ---
@@ -280,6 +293,14 @@ def _build_training_config(raw: dict) -> TrainingConfig:
                 architecture=architecture,
             ),
             fine_tune=fine_tune,
+        )
+    elif algorithm == "gradient_boosting":
+        hyperparams = GradientBoostingHyperparams(
+            max_iter=int(hp.get("max_iter", 300)),
+            learning_rate=float(hp.get("learning_rate", 0.05)),
+            max_depth=hp.get("max_depth", 7),
+            min_samples_leaf=int(hp.get("min_samples_leaf", 20)),
+            l2_regularization=float(hp.get("l2_regularization", 0.1)),
         )
     else:  # linear_regression
         hyperparams = LinearRegressionHyperparams()

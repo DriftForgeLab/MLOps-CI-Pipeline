@@ -27,13 +27,13 @@ container restart is needed after a new model is promoted.
 - **Docker** (with Compose v2) installed and running.
 - **Python 3.12** for running the pipeline locally.
 - At least one model promoted to **Production** via the pipeline
-  (`run-pipeline --config src/config/pipeline_tabular.yaml` and approve when prompted).
+  (`run-pipeline --config src/config/pipeline_tabular_classification.yaml` and approve when prompted).
 
 ## Quick Start
 
 1. **Run the pipeline** and approve a model so a Production version exists:
    ```bash
-   run-pipeline --config src/config/pipeline_tabular.yaml
+   run-pipeline --config src/config/pipeline_tabular_classification.yaml
    ```
 
 2. **Copy the environment file** and adjust if needed:
@@ -65,7 +65,7 @@ container restart is needed after a new model is promoted.
 |-----------------------|------------------------------|----------------------------------------------------|
 | `MLFLOW_TRACKING_URI` | `/app/mlruns`                | Path to the MLflow tracking store inside container. |
 | `API_PORT`            | `8000`                       | Host port mapped to the container's port 8000.     |
-| `PIPELINE_CONFIG_PATH`| `/app/src/config/pipeline_tabular.yaml` | Pipeline config path inside the container.       |
+| `PIPELINE_CONFIG_PATH`| `/app/src/config/pipeline_tabular_classification.yaml` | Pipeline config path inside the container.       |
 | `LOG_LEVEL`           | `INFO`                       | Logging level for the prediction service.          |
 | `MODEL_STAGE`         | `Production`                 | MLflow stage to load. Only `Production` in practice.|
 
@@ -138,7 +138,7 @@ docker run --rm \
   -v "$(pwd)/artifacts:/app/artifacts:ro" \
   -v "$(pwd)/data/processed:/app/data/processed:ro" \
   -e MLFLOW_TRACKING_URI=/app/mlruns \
-  -e PIPELINE_CONFIG_PATH=/app/src/config/pipeline_tabular.yaml \
+  -e PIPELINE_CONFIG_PATH=/app/src/config/pipeline_tabular_classification.yaml \
   mlops-prediction-api
 ```
 
@@ -160,7 +160,7 @@ To trigger the CI workflow:
 
 The pipeline has not been run with a successful promotion yet. Run:
 ```bash
-run-pipeline --config src/config/pipeline_tabular.yaml
+run-pipeline --config src/config/pipeline_tabular_classification.yaml
 ```
 and approve the model when prompted.
 

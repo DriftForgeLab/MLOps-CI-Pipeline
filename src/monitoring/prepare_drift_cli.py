@@ -44,7 +44,7 @@
 # Usage:
 #   prepare-drift-training \
 #       --drifted-dir data/batches/images/drifted \
-#       --config src/config/pipeline_image.yaml
+#       --config src/config/pipeline_image_cnn.yaml
 #
 # After running this command:
 #   - Holdout images are saved to data/evaluation/drifted_holdout/<dataset>/
@@ -52,7 +52,7 @@
 #   - Training images are added to data/raw/<dataset>/images/<class>/.
 #
 # Next step:
-#   run-pipeline --config src/config/pipeline_image.yaml --fine-tune
+#   run-pipeline --config src/config/pipeline_image_cnn.yaml --fine-tune
 #
 # The pipeline will automatically evaluate the fine-tuned model on the holdout
 # and print a before/after comparison at the end of the run.
@@ -99,7 +99,7 @@ def _parse_args() -> argparse.Namespace:
         "--config",
         type=str,
         required=True,
-        help="Path to the pipeline config YAML (e.g. src/config/pipeline_image.yaml).",
+        help="Path to the pipeline config YAML (e.g. src/config/pipeline_image_cnn.yaml).",
     )
     parser.add_argument(
         "--holdout-ratio",

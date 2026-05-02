@@ -40,27 +40,26 @@ def _parse_args() -> argparse.Namespace:
         "--config",
         type = str,
         required = True,
-        help = "Path to pipeline config file (e.g., src/config/pipeline_tabular.yaml)"
+        help = "Path to pipeline config file (e.g., src/config/pipeline_tabular_classification.yaml)"
     )
     parser.add_argument(
         "--fine-tune",
         action = "store_true",
         default = False,
         help = (
-            "Fine-tune the existing Production model instead of training from scratch. "
-            "Loads Production weights from the MLflow Registry and continues training "
-            "with the fine_tune hyperparameters defined in training_image_cnn.yaml "
-            "(fewer epochs, lower learning rate). Only applies to CNN image pipelines; "
-            "ignored for tabular (random forest) pipelines.\n\n"
-            "DRIFT-ADAPTIVE FINE-TUNING (recommended workflow):\n"
-            "  When responding to detected drift, run prepare-drift-training BEFORE "
-            "this command. Organise your drifted batch into class subdirectories "
-            "(e.g. data/batches/images/drifted/cats/, dogs/) then run:\n\n"
+            "For CNN image pipelines: load Production weights from the MLflow Registry "
+            "and continue training with fine_tune hyperparameters (fewer epochs, lower LR). "
+            "For tabular pipelines this flag has no special effect — retraining always "
+            "starts from scratch on whatever data is in data/raw/<dataset>/data.csv.\n\n"
+            "DRIFT-ADAPTIVE RETRAINING (recommended workflow after drift is detected):\n\n"
+            "  Image pipelines:\n"
             "    prepare-drift-training --drifted-dir data/batches/images/drifted --config <config>\n"
             "    run-pipeline --config <config> --fine-tune\n\n"
-            "The pipeline will then automatically evaluate the fine-tuned model on the "
-            "held-out drifted images and print a before/after performance comparison. "
-            "Run 'prepare-drift-training --help' for setup instructions."
+            "  Tabular pipelines:\n"
+            "    prepare-drift-training-tabular --drifted-csv data/batches/tabular/drifted.csv --config <config>\n"
+            "    run-pipeline --config <config>\n\n"
+            "The pipeline automatically evaluates the retrained model on the held-out "
+            "drifted data and prints a before/after comparison at the promotion gate."
         ),
     )
     return parser.parse_args()
@@ -125,10 +124,15 @@ def main() -> None:
     overall_status = "completed"
     try:
         for stage_name in config.pipeline_stages:
-            # On fine-tune runs, evaluate the model on the held-out drifted images
-            # BEFORE the promotion stage so the user sees before/after performance
+            # Before the promotion stage, evaluate the retrained model on any
+            # held-out drifted data so the user sees before/after performance
             # when making the promotion decision.
-            if stage_name == "promotion" and fine_tune:
+            # Image pipelines: only run on --fine-tune (weights loaded from production).
+            # Tabular pipelines: always run (retraining is always from scratch;
+            # the holdout file's existence gates whether anything is computed).
+            from src.config.schema import IMAGE_TASK_TYPES as _IMAGE_TASK_TYPES
+            _is_image = config.task_type in _IMAGE_TASK_TYPES
+            if stage_name == "promotion" and (fine_tune or not _is_image):
                 drift_eval = run_drift_adaptation_eval(config, version_id)
                 if drift_eval is not None:
                     eval_path = Path(config.output_dir) / "drift_adaptation_eval.json"

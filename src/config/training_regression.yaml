@@ -1,19 +1,15 @@
 # =============================================================================
 # src/config/training_regression.yaml — Regression training configuration
 # =============================================================================
-# Algorithm: Random Forest Regressor (sklearn.ensemble.RandomForestRegressor)
+# Algorithm: Histogram Gradient Boosting Regressor (sklearn.ensemble.HistGradientBoostingRegressor)
 # Dataset:   California Housing (20,640 rows, 8 numeric features)
-#
-# Expected performance on California Housing (validation split, seed=42):
-#   R²   ≈ 0.81    (promotion gate: >= 0.75)
-#   MAE  ≈ 0.38    (promotion gate: <= 0.55, in $100k units)
-#   RMSE ≈ 0.52    (informational only)
 # =============================================================================
 
 model:
-  algorithm: random_forest
+  algorithm: gradient_boosting
   hyperparameters:
-    n_estimators: 100       # number of trees — 100 is standard; increase for marginal gains
-    max_depth: null         # null = grow until leaves are pure (default RF behaviour)
-    min_samples_split: 2    # minimum samples to split an internal node
-    class_weight: null      # not applicable for regression; kept for schema compatibility
+    max_iter: 300            # number of boosting iterations (trees)
+    learning_rate: 0.05      # shrinkage — lower is more robust but needs more iterations
+    max_depth: 7             # max depth per tree
+    min_samples_leaf: 20     # regularisation — higher reduces overfitting on noisy leaves
+    l2_regularization: 0.1   # L2 penalty on leaf weights

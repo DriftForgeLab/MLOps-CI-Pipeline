@@ -17,6 +17,26 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Dataset-specific prediction display hints
+# ---------------------------------------------------------------------------
+# Each entry provides a multiplier (for converting the raw predicted value to
+# a human-readable amount) and a label shown to the user in the API response.
+_DATASET_DISPLAY: dict[str, dict] = {
+    "california_housing": {
+        "multiplier": 100_000,
+        "unit": "$",
+        "label": "Estimated house price (California Housing dataset)",
+    },
+}
+
+def _format_regression_note(dataset_name: str, raw_value: float) -> str | None:
+    info = _DATASET_DISPLAY.get(dataset_name)
+    if info is None:
+        return None
+    human = raw_value * info["multiplier"]
+    return f"≈ {info['unit']}{human:,.0f} · {info['label']} (raw model output: {raw_value:.4f} × {info['unit']}{info['multiplier']:,})"
+
+# ---------------------------------------------------------------------------
 # HTML UI
 # ---------------------------------------------------------------------------
 
@@ -97,7 +117,8 @@ _UI_HTML = """<!DOCTYPE html>
   .result-label { font-size: 0.78rem; color: #888; text-transform: uppercase;
                   letter-spacing: 0.06em; margin-bottom: 8px; }
   .result-value { font-size: 2rem; font-weight: 700; }
-  .result-meta { font-size: 0.8rem; color: #999; margin-top: 10px; }
+  .result-note { font-size: 0.88rem; color: #444; margin-top: 8px; font-weight: 500; }
+  .result-meta { font-size: 0.8rem; color: #999; margin-top: 6px; }
   .error-text { color: #c00; }
   .loading-text { color: #888; font-style: italic; }
 </style>
@@ -124,6 +145,7 @@ _UI_HTML = """<!DOCTYPE html>
 <div id="result" class="result">
   <div class="result-label">Prediction</div>
   <div id="result-value" class="result-value"></div>
+  <div id="result-note" class="result-note"></div>
   <div id="result-meta" class="result-meta"></div>
 </div>
 
@@ -252,9 +274,11 @@ document.getElementById('predict-form').addEventListener('submit', async (e) => 
     if (!resp.ok) {
       document.getElementById('result-value').innerHTML =
         '<span class="error-text">' + escHtml(data.detail || 'Unknown error') + '</span>';
+      document.getElementById('result-note').textContent = '';
       document.getElementById('result-meta').textContent = '';
     } else {
       document.getElementById('result-value').textContent = data.prediction;
+      document.getElementById('result-note').textContent = data.note || '';
       document.getElementById('result-meta').textContent =
         'Algorithm: ' + data.algorithm +
         '  ·  Version: ' + data.model_version_id +
@@ -399,11 +423,20 @@ def _predict_tabular(model_info, body: dict):
             content={"detail": "Inference failed due to an internal error."}
         )
 
+    if model_info.task_type == "regression" and isinstance(prediction, float):
+        prediction = round(prediction, 4)
+        formatted = f"{prediction:.4f}"
+        note = _format_regression_note(model_info.dataset_name, prediction)
+    else:
+        formatted = str(prediction)
+        note = None
+
     return PredictionResponse(
-        prediction=str(prediction),
+        prediction=formatted,
         model_version_id=model_info.dataset_version_id,
         algorithm=model_info.algorithm,
         task_type=model_info.task_type,
+        note=note,
     )
 
 

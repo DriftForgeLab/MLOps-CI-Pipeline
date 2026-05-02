@@ -1,0 +1,43 @@
+name: wine
+task_type: classification
+description: UCI Wine dataset — classify three wine cultivars from chemical analysis (13 features, 178 samples).
+source: scikit-learn
+created_at: '2026-04-25'
+features:
+  - alcohol
+  - malic_acid
+  - ash
+  - alcalinity_of_ash
+  - magnesium
+  - total_phenols
+  - flavanoids
+  - nonflavanoid_phenols
+  - proanthocyanins
+  - color_intensity
+  - hue
+  - od280_od315
+  - proline
+target: wine_class
+schema:
+  alcohol: float
+  malic_acid: float
+  ash: float
+  alcalinity_of_ash: float
+  magnesium: float
+  total_phenols: float
+  flavanoids: float
+  nonflavanoid_phenols: float
+  proanthocyanins: float
+  color_intensity: float
+  hue: float
+  od280_od315: float
+  proline: float
+  wine_class: string
+
+constraints:
+  min_rows: 10
+  max_null_fraction: 0.0
+  label_classes:
+    - cultivar_1
+    - cultivar_2
+    - cultivar_3

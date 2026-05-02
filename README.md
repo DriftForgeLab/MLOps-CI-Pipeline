@@ -38,16 +38,16 @@ Runs the full pipeline: versioning → validation → split → preprocessing �
 
 ```bash
 # Tabular regression — Random Forest on California Housing
-run-pipeline --config src/config/pipeline_regression.yaml
+run-pipeline --config src/config/pipeline_tabular_regression.yaml
 
 # Tabular classification — Random Forest on Iris
-run-pipeline --config src/config/pipeline_tabular.yaml
+run-pipeline --config src/config/pipeline_tabular_classification.yaml
 
 # Image classification — CNN with PyTorch (JPG/PNG)
-run-pipeline --config src/config/pipeline_image.yaml
+run-pipeline --config src/config/pipeline_image_cnn.yaml
 
 # Raw DNG images through ISP pipeline → CNN
-run-pipeline --config src/config/pipeline_raw_image.yaml
+run-pipeline --config src/config/pipeline_image_raw.yaml
 ```
 
 > **First run with a new dataset:** if `dataset.yaml` is missing, the pipeline will prompt
@@ -59,8 +59,8 @@ Rolls back the Production model to a previous registry version. Omit `--version`
 back to the most recent Staging version. `--yes` skips the confirmation prompt.
 
 ```bash
-rollback-model --config src/config/pipeline_tabular.yaml
-rollback-model --config src/config/pipeline_tabular.yaml --version 2 --reason "accuracy regression" --yes
+rollback-model --config src/config/pipeline_tabular_classification.yaml
+rollback-model --config src/config/pipeline_tabular_classification.yaml --version 2 --reason "accuracy regression" --yes
 ```
 
 ### Start the prediction API
@@ -86,17 +86,17 @@ Run this periodically after collecting new production rows.
 monitor-drift \
     --batch-csv data/new_batch.csv \
     --model-name iris_rf \
-    --config src/config/pipeline_tabular.yaml
+    --config src/config/pipeline_tabular_classification.yaml
 
 # Explicit dataset version:
 monitor-drift \
     --batch-csv data/new_batch.csv \
     --model-name iris_rf \
-    --config src/config/pipeline_tabular.yaml \
+    --config src/config/pipeline_tabular_classification.yaml \
     --dataset-version abc123hash
 ```
 
-For the regression pipeline, replace `--config` with `src/config/pipeline_regression.yaml`
+For the regression pipeline, replace `--config` with `src/config/pipeline_tabular_regression.yaml`
 and `--model-name` with the registered model name (default: `lightweight-mlops-pipeline-regression`).
 
 Results are saved as JSON in `outputs/drift_monitoring/<model-name>/`. If drift severity
@@ -128,12 +128,12 @@ data/incoming/my_new_batch/
 # Standard JPG/PNG images
 prepare-image-batch \
     --input-dir data/incoming/my_new_batch \
-    --config src/config/pipeline_image.yaml
+    --config src/config/pipeline_image_cnn.yaml
 
 # Raw DNG images
 prepare-image-batch \
     --input-dir data/incoming/my_new_batch \
-    --config src/config/pipeline_raw_image.yaml
+    --config src/config/pipeline_image_raw.yaml
 ```
 
 This automatically finds the correct training version and applies the same
@@ -144,7 +144,7 @@ the exact `monitor-drift-image` command to run next — just copy and paste it.
 ```bash
 monitor-drift-image \
     --batch-npz data/batches/<timestamp>.npz \
-    --config src/config/pipeline_image.yaml
+    --config src/config/pipeline_image_cnn.yaml
 ```
 
 For raw-image pipelines, add ISP scenario interpretation to get a plausible
@@ -153,7 +153,7 @@ This is interpretation of detected drift — the Wasserstein score is the actual
 ```bash
 monitor-drift-image \
     --batch-npz data/batches/<timestamp>.npz \
-    --config src/config/pipeline_raw_image.yaml \
+    --config src/config/pipeline_image_raw.yaml \
     --drift-scenarios-dir data/drift_scenarios/ \
     --sensitivity-report data/drift_scenarios/sensitivity_report.json
 ```
@@ -175,7 +175,7 @@ Production model from the MLflow registry at startup.
 
 ```bash
 # Prerequisites: a Production model must exist (run pipeline and approve first)
-run-pipeline --config src/config/pipeline_tabular.yaml
+run-pipeline --config src/config/pipeline_tabular_classification.yaml
 
 # Copy environment template
 cp .env.example .env

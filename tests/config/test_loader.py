@@ -9,7 +9,7 @@ CONFIG_DIR = Path(__file__).parent.parent.parent / "src" / "config"
 # ---------------------------------------------------------------------------
 
 def test_load_config_valid():
-    config = load_config(CONFIG_DIR / "pipeline_tabular.yaml")
+    config = load_config(CONFIG_DIR / "pipeline_tabular_classification.yaml")
     assert config.task_type == "classification"
     assert config.random_seed == 42
     assert config.log_level == "INFO"
@@ -81,8 +81,8 @@ def test_load_training_config_classification():
 
 def test_load_training_config_regression():
     config = load_training_config(CONFIG_DIR / "training_regression.yaml")
-    assert config.model.algorithm == "random_forest"
-    assert config.model.hyperparameters.n_estimators == 100
+    assert config.model.algorithm == "gradient_boosting"
+    assert config.model.hyperparameters.max_iter == 300
 
 def test_load_training_config_invalid_algorithm(tmp_path):
     cfg = tmp_path / "bad.yaml"
@@ -221,7 +221,7 @@ class TestValidatePositiveInt:
 # ---------------------------------------------------------------------------
 
 def test_load_config_image_classification():
-    config = load_config(CONFIG_DIR / "pipeline_image.yaml")
+    config = load_config(CONFIG_DIR / "pipeline_image_cnn.yaml")
     assert config.task_type == "image_classification_cnn"
     assert config.dataset == "sample_images"
 

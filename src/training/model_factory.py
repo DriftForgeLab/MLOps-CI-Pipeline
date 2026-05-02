@@ -12,13 +12,14 @@
 
 from collections.abc import Callable
 
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor, HistGradientBoostingRegressor
 from sklearn.linear_model import LogisticRegression, LinearRegression
 
 from src.config.schema import (
     TrainingConfig,
     RandomForestHyperparams,
     LogisticRegressionHyperparams,
+    GradientBoostingHyperparams,
     CLASSIFICATION_TASK_TYPES,
     SKLEARN_TASK_TYPES,
 )
@@ -43,6 +44,17 @@ def _build_rf_regressor(hp: RandomForestHyperparams, seed: int) -> RandomForestR
         n_estimators=hp.n_estimators,
         max_depth=hp.max_depth,
         min_samples_split=hp.min_samples_split,
+        random_state=seed,
+    )
+
+
+def _build_gradient_boosting_regressor(hp: GradientBoostingHyperparams, seed: int) -> HistGradientBoostingRegressor:
+    return HistGradientBoostingRegressor(
+        max_iter=hp.max_iter,
+        learning_rate=hp.learning_rate,
+        max_depth=hp.max_depth,
+        min_samples_leaf=hp.min_samples_leaf,
+        l2_regularization=hp.l2_regularization,
         random_state=seed,
     )
 
@@ -77,6 +89,7 @@ for _tt in _SKLEARN_CLASSIFICATION_TYPES:
 for _tt in _SKLEARN_REGRESSION_TYPES:
     _DISPATCH[("random_forest", _tt)] = _build_rf_regressor
     _DISPATCH[("linear_regression", _tt)] = _build_linear_regression
+    _DISPATCH[("gradient_boosting", _tt)] = _build_gradient_boosting_regressor
 
 
 def create_model(training_config: TrainingConfig, task_type: str, random_seed: int):
