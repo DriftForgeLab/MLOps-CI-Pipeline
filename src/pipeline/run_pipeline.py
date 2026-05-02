@@ -110,6 +110,12 @@ def main() -> None:
 
     fine_tune = args.fine_tune
 
+    # Always remove any leftover drift adaptation eval from a previous run so
+    # the promotion stage never picks up stale results.
+    _stale_eval = Path(config.output_dir) / "drift_adaptation_eval.json"
+    if _stale_eval.exists():
+        _stale_eval.unlink()
+
     config_hash = compute_config_hash(config_path)
     pipeline_execution_id = uuid.uuid4().hex
 
