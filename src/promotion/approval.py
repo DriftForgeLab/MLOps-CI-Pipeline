@@ -139,7 +139,7 @@ def _print_drift_eval_block(drift_eval: dict) -> None:
     after    = drift_eval.get("after_finetuning", {})
     delta    = drift_eval.get("delta", {})
     improved = drift_eval.get("improved", False)
-    n        = drift_eval.get("n_holdout_images", "?")
+    n        = drift_eval.get("n_holdout_samples", drift_eval.get("n_holdout_images", "?"))
 
     def _fmt(v) -> str:
         return f"{v:.4f}" if isinstance(v, float) else "N/A"
