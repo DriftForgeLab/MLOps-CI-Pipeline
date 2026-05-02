@@ -252,8 +252,9 @@ def main() -> None:
         shutil.rmtree(holdout_dir)
         logger.info("Removed existing holdout directory.")
 
-    # --- Save holdout CSV ---
+    # --- Save holdout CSV and marker ---
     save_holdout_csv(holdout_df, holdout_dir)
+    (holdout_dir / ".drift_prepared").touch()
 
     # --- Evaluate Production model on holdout → baseline ---
     if n_holdout == 0:

@@ -132,11 +132,18 @@ def main() -> None:
             # the holdout file's existence gates whether anything is computed).
             from src.config.schema import IMAGE_TASK_TYPES as _IMAGE_TASK_TYPES
             _is_image = config.task_type in _IMAGE_TASK_TYPES
-            if stage_name == "promotion" and (fine_tune or not _is_image):
+            _tabular_marker = (
+                Path(config.data.evaluation) / "drifted_holdout" / config.dataset / ".drift_prepared"
+            )
+            _run_tabular_drift_eval = not _is_image and _tabular_marker.exists()
+            if stage_name == "promotion" and (fine_tune or _run_tabular_drift_eval):
                 drift_eval = run_drift_adaptation_eval(config, version_id)
                 if drift_eval is not None:
                     eval_path = Path(config.output_dir) / "drift_adaptation_eval.json"
                     atomic_write_json(eval_path, drift_eval)
+                # Consume the marker so subsequent normal runs don't show the block
+                if _tabular_marker.exists():
+                    _tabular_marker.unlink()
                     logger.info("Drift adaptation eval written to %s", eval_path)
                     if mlflow.active_run():
                         for key, val in drift_eval.get("delta", {}).items():

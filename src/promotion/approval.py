@@ -150,8 +150,9 @@ def _print_drift_eval_block(drift_eval: dict) -> None:
             return "N/A"
         return f"{'+'if v >= 0 else ''}{v:.4f}"
 
+    sample_label = "drifted images" if drift_eval.get("task_type", "").startswith("image") else "drifted samples"
     print("\n" + "-" * 60)
-    print(f"  DRIFT ADAPTATION  (holdout: {n} drifted images)")
+    print(f"  DRIFT ADAPTATION  (holdout: {n} {sample_label})")
     print("-" * 60)
     # Show metrics present in the baseline dict — handles both classification and regression
     clf_keys = [("accuracy","Accuracy"),("f1_score","F1 score"),("precision","Precision"),("recall","Recall")]
