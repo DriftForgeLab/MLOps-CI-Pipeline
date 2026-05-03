@@ -136,6 +136,46 @@ def _create_raw_image_dataset(raw_dir: Path, dataset_name: str = "cnn_test_image
     return dataset_name
 
 
+def _create_prefixed_raw_image_dataset(raw_dir: Path, dataset_name: str = "cnn_prefixed_images") -> str:
+    """Create a dataset whose filenames encode an original train/test boundary."""
+    dataset_dir = raw_dir / dataset_name
+    images_dir = dataset_dir / "images"
+
+    rng = np.random.RandomState(1)
+    classes = {"cat": (6, 4), "dog": (6, 4)}
+
+    for class_name, (train_count, test_count) in classes.items():
+        class_dir = images_dir / class_name
+        class_dir.mkdir(parents=True)
+        for i in range(train_count):
+            arr = rng.randint(0, 255, (8, 8, 3), dtype=np.uint8)
+            Image.fromarray(arr).save(class_dir / f"train_{i:03d}.png")
+        for i in range(test_count):
+            arr = rng.randint(0, 255, (8, 8, 3), dtype=np.uint8)
+            Image.fromarray(arr).save(class_dir / f"test_{i:03d}.png")
+
+    meta = {
+        "name": dataset_name,
+        "task_type": "image_classification_cnn",
+        "features": [],
+        "target": "label",
+        "schema": {},
+        "image_properties": {
+            "expected_formats": [".png"],
+            "min_images_per_class": 1,
+        },
+        "constraints": {
+            "min_rows": 2,
+            "max_null_fraction": 0.0,
+            "label_classes": sorted(classes.keys()),
+        },
+    }
+    with open(dataset_dir / "dataset.yaml", "w") as f:
+        yaml.dump(meta, f)
+
+    return dataset_name
+
+
 def _write_configs(tmp_path: Path) -> dict[str, Path]:
     prep_cfg = tmp_path / "preprocessing_cnn.yaml"
     train_cfg = tmp_path / "training_cnn.yaml"
@@ -324,3 +364,33 @@ def test_cnn_model_can_predict_on_val_split(tmp_path):
     predictions = result.model.predict(X_val)
     assert len(predictions) == X_val.shape[0]
     assert set(predictions).issubset({0, 1})
+
+
+def test_cnn_evaluation_includes_official_test_report_when_preserved(tmp_path):
+    """evaluate() should expose a separate official test report when the split preserves it."""
+    raw_dir = tmp_path / "raw"
+    processed_dir = tmp_path / "processed"
+    artifact_dir = tmp_path / "artifacts"
+    dataset_name = _create_prefixed_raw_image_dataset(raw_dir)
+    cfg_paths = _write_configs(tmp_path)
+
+    version_id = create_dataset_version(dataset_name=dataset_name, raw_dir=raw_dir, processed_dir=processed_dir).name
+    split_dataset(dataset_name=dataset_name, version_id=version_id, random_seed=42, processed_dir=processed_dir)
+    run_image_preprocessing(
+        dataset_name=dataset_name,
+        version_id=version_id,
+        prep_config_path=cfg_paths["preprocessing"],
+        processed_dir=processed_dir,
+    )
+
+    mock_config = _make_mock_config(dataset_name, processed_dir, cfg_paths)
+    result = run_cnn_training(mock_config, version_id)
+    save_model_artifact(result, run_id=version_id, task_type="image_classification_cnn", artifact_dir=artifact_dir)
+
+    with patch("src.registry.model_registry.get_production_model_metrics", return_value=None):
+        report = evaluate(mock_config, version_id, artifact_dir=artifact_dir)
+
+    assert "official_test_report" in report
+    assert report["official_test_report"]["split"] == "test"
+    assert "accuracy" in report["official_test_report"]["metrics"]
+    assert "f1_score" in report["official_test_report"]["metrics"]

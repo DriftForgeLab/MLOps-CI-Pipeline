@@ -43,7 +43,8 @@ monitor-drift        = "src.monitoring.monitor_cli:main"
 monitor-drift-image  = "src.monitoring.image_monitor_cli:main"
 monitor-summary      = "src.monitoring.monitor_summary_cli:main"
 prepare-image-batch    = "src.data.prepare_batch_cli:main"
-prepare-drift-training = "src.monitoring.prepare_drift_cli:main"
+prepare-drift-training  = "src.monitoring.prepare_drift_cli:main"
+rollback-drift-training = "src.monitoring.rollback_drift_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

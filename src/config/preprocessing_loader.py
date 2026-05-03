@@ -239,6 +239,19 @@ def _validate_image_augmentation(aug: dict, errors: list[str]) -> None:
             errors.append(
                 f"'image.augmentation.augmentation_factor' must be an integer >= 1, got {af!r}"
             )
+    if "random_crop_padding" in aug:
+        rcp = aug["random_crop_padding"]
+        if isinstance(rcp, bool) or not isinstance(rcp, int) or rcp < 0:
+            errors.append(
+                f"'image.augmentation.random_crop_padding' must be a non-negative integer, got {rcp!r}"
+            )
+    for key in ("brightness_jitter", "contrast_jitter", "saturation_jitter"):
+        if key in aug:
+            v = aug[key]
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0.0 or v > 1.0:
+                errors.append(
+                    f"'image.augmentation.{key}' must be a number in [0.0, 1.0], got {v!r}"
+                )
 
 
 def _validate_image_section(img: dict, errors: list[str]) -> None:
@@ -461,6 +474,10 @@ def _build_image_preprocessing_config(raw: dict | None) -> ImagePreprocessingCon
             horizontal_flip=aug_raw.get("horizontal_flip", False),
             rotation_degrees=aug_raw.get("rotation_degrees", 0),
             augmentation_factor=aug_raw.get("augmentation_factor", 1),
+            random_crop_padding=int(aug_raw.get("random_crop_padding", 0)),
+            brightness_jitter=float(aug_raw.get("brightness_jitter", 0.0)),
+            contrast_jitter=float(aug_raw.get("contrast_jitter", 0.0)),
+            saturation_jitter=float(aug_raw.get("saturation_jitter", 0.0)),
         ),
         raw_input=raw.get("raw_input", False),
         isp=_build_isp_config(raw.get("isp")),

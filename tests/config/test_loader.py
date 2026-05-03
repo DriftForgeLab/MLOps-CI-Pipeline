@@ -226,6 +226,16 @@ def test_load_config_image_classification():
     assert config.dataset == "sample_images"
 
 
+def test_load_config_cifar10_image_classification():
+    cfg = CONFIG_DIR / "pipeline_cifar10.yaml"
+    assert cfg.exists(), "Expected pipeline_cifar10.yaml to exist"
+
+    config = load_config(cfg)
+    assert config.task_type == "image_classification_cnn"
+    assert config.dataset == "cifar10"
+    assert config.configs.preprocessing == "src/config/preprocessing_cifar10.yaml"
+
+
 def test_load_preprocessing_config_with_image_section():
     from src.config.loader import load_preprocessing_config
     prep = load_preprocessing_config(CONFIG_DIR / "preprocessing_image.yaml")
@@ -235,6 +245,37 @@ def test_load_preprocessing_config_with_image_section():
     assert prep.image.normalize is True
     assert prep.image.flatten is False
     assert prep.image.augmentation.enabled is False
+
+
+def test_load_preprocessing_config_with_cifar10_image_section():
+    from src.config.loader import load_preprocessing_config
+
+    cfg = CONFIG_DIR / "preprocessing_cifar10.yaml"
+    assert cfg.exists(), "Expected preprocessing_cifar10.yaml to exist"
+
+    prep = load_preprocessing_config(cfg)
+    assert prep.image is not None
+    assert prep.image.target_size == (32, 32)
+    assert prep.image.color_mode == "rgb"
+    assert prep.image.normalize is True
+    assert prep.image.flatten is False
+    assert prep.image.augmentation.enabled is True
+    assert prep.image.augmentation.horizontal_flip is True
+    assert prep.image.augmentation.rotation_degrees == 0
+    assert prep.image.augmentation.augmentation_factor == 4
+    assert prep.image.augmentation.random_crop_padding == 4
+    assert prep.image.augmentation.brightness_jitter == pytest.approx(0.4)
+    assert prep.image.augmentation.contrast_jitter == pytest.approx(0.4)
+    assert prep.image.augmentation.saturation_jitter == pytest.approx(0.2)
+
+
+def test_load_training_config_cifar10_cnn():
+    config = load_training_config(CONFIG_DIR / "training_image_cnn.yaml")
+    assert config.model.algorithm == "cnn"
+    assert len(config.model.architecture.conv_layers) == 3
+    assert tuple(layer.out_channels for layer in config.model.architecture.conv_layers) == (32, 64, 128)
+    assert config.model.architecture.fc_units == 256
+    assert config.model.hyperparameters.epochs == 30
 
 
 def test_image_config_invalid_color_mode(tmp_path):

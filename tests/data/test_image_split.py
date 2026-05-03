@@ -60,6 +60,51 @@ def _make_image_dataset(
     return tmp_path, version_id
 
 
+def _make_prefixed_image_dataset(
+    tmp_path: Path,
+    classes: dict[str, tuple[int, int]] | None = None,
+) -> tuple[Path, str]:
+    """Create a versioned dataset with explicit train_/test_ filename prefixes."""
+    if classes is None:
+        classes = {"cats": (6, 4), "dogs": (6, 4)}
+
+    version_id = "testver"
+    version_dir = tmp_path / "myimages" / version_id
+    images_dir = version_dir / "images"
+
+    rng = np.random.RandomState(7)
+    for class_name, (train_count, test_count) in classes.items():
+        class_dir = images_dir / class_name
+        class_dir.mkdir(parents=True)
+        for i in range(train_count):
+            arr = rng.randint(0, 255, (8, 8, 3), dtype=np.uint8)
+            Image.fromarray(arr).save(class_dir / f"train_{i:03d}.png")
+        for i in range(test_count):
+            arr = rng.randint(0, 255, (8, 8, 3), dtype=np.uint8)
+            Image.fromarray(arr).save(class_dir / f"test_{i:03d}.png")
+
+    meta = {
+        "name": "myimages",
+        "task_type": "image_classification",
+        "features": [],
+        "target": "label",
+        "schema": {},
+        "image_properties": {
+            "expected_formats": [".png"],
+            "min_images_per_class": 1,
+        },
+        "constraints": {
+            "min_rows": 2,
+            "max_null_fraction": 0.0,
+            "label_classes": sorted(classes.keys()),
+        },
+    }
+    with open(version_dir / "dataset.yaml", "w") as f:
+        yaml.dump(meta, f)
+
+    return tmp_path, version_id
+
+
 # ---------------------------------------------------------------------------
 # Determinism
 # ---------------------------------------------------------------------------
@@ -196,3 +241,28 @@ def test_total_images_preserved(tmp_path):
         total += len(list(split_images_dir.rglob("*.png")))
 
     assert total == sum(classes.values())
+
+
+def test_preserves_prefixed_official_test_boundary(tmp_path):
+    """test_ images must remain in test when the dataset already encodes a test split."""
+    base, vid = _make_prefixed_image_dataset(tmp_path)
+    split_image_dataset("myimages", vid, random_seed=42, processed_dir=base)
+
+    version_dir = base / "myimages" / vid
+    train_files = sorted(f.name for f in (version_dir / "train" / "images").rglob("*.png"))
+    val_files = sorted(f.name for f in (version_dir / "val" / "images").rglob("*.png"))
+    test_files = sorted(f.name for f in (version_dir / "test" / "images").rglob("*.png"))
+
+    assert train_files
+    assert val_files
+    assert test_files
+    assert all(name.startswith("train_") for name in train_files)
+    assert all(name.startswith("train_") for name in val_files)
+    assert all(name.startswith("test_") for name in test_files)
+
+    with open(version_dir / "dataset.yaml") as f:
+        metadata = yaml.safe_load(f)
+
+    assert metadata["split"]["train"] + metadata["split"]["val"] == 12
+    assert metadata["split"]["test"] == 8
+    assert metadata["split"]["preserved_original_test"] is True

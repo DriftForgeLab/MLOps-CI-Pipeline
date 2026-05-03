@@ -125,6 +125,11 @@ def _evaluation_stage(config: PipelineConfig, version_id: str) -> None:
     report_path = Path(config.output_dir) / "evaluation_report.json"
     atomic_write_json(report_path, report)
     logger.info("  Evaluation report written to: %s", report_path.resolve())
+    official_test_report = report.get("official_test_report")
+    if official_test_report is not None:
+        official_test_path = Path(config.output_dir) / "official_test_evaluation_report.json"
+        atomic_write_json(official_test_path, official_test_report)
+        logger.info("  Official test evaluation report written to: %s", official_test_path.resolve())
     log_evaluation_to_mlflow(report)
     log_comparison_to_mlflow(report, output_dir=Path(config.output_dir))
     
@@ -378,6 +383,77 @@ def _drift_provenance(drift: dict | None, model_name: str) -> dict:
     }
 
 
+def _offer_drift_rollback_on_rejection(config: PipelineConfig) -> None:
+    """If a recent drift attempt is recorded, offer to roll it back interactively.
+
+    Called when a promotion is rejected. Skips silently if there are no
+    recorded attempts, if there is no TTY (non-interactive run), or if the
+    user declines. Never raises — rollback is best-effort.
+    """
+    import sys
+
+    try:
+        from src.data.drift_adaptation import (
+            latest_drift_attempt,
+            rollback_drift_attempt,
+        )
+    except Exception:  # pragma: no cover - defensive
+        return
+
+    raw_dataset_dir = Path(config.data.raw) / config.dataset
+    attempt = latest_drift_attempt(raw_dataset_dir)
+    if attempt is None:
+        return
+
+    attempt_id = attempt.get("attempt_id", "?")
+    n_files = attempt.get("n_files_added", 0)
+    drifted_dir = attempt.get("drifted_dir", "?")
+
+    if not sys.stdin.isatty():
+        logger.warning(
+            "Promotion rejected — drift attempt '%s' added %d file(s) from '%s' "
+            "to the raw dataset. Run `rollback-drift-training --config %s --latest` "
+            "to remove them.",
+            attempt_id, n_files, drifted_dir, config.configs.preprocessing,
+        )
+        return
+
+    print()
+    print("=" * 62)
+    print("  DRIFT ROLLBACK")
+    print("=" * 62)
+    print()
+    print(f"  Latest drift attempt:   {attempt_id}")
+    print(f"  Files added to dataset: {n_files}")
+    print(f"  Source drifted_dir:     {drifted_dir}")
+    print()
+    print("  Promotion was rejected. The drifted images added by this attempt")
+    print("  are still in the raw dataset and will be picked up by the next")
+    print("  pipeline run. Roll them back now?")
+    print()
+    try:
+        answer = input("  Roll back this drift attempt? [y/N]: ").strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        answer = "n"
+
+    if answer not in ("y", "yes"):
+        print()
+        print("  Skipped. To roll back later, run:")
+        print(f"    rollback-drift-training --latest --config <pipeline-config>")
+        print()
+        return
+
+    try:
+        result = rollback_drift_attempt(Path(attempt["manifest_path"]), remove_holdout=False)
+    except Exception as exc:
+        logger.warning("Drift rollback failed: %s", exc)
+        return
+
+    print()
+    print(f"  Removed {result['removed']} file(s); {result['missing']} already missing.")
+    print()
+
+
 def _promotion_stage(config: PipelineConfig, version_id: str) -> None:
     # Load evaluation report
     report_path = Path(config.output_dir) / "evaluation_report.json"
@@ -464,6 +540,7 @@ def _promotion_stage(config: PipelineConfig, version_id: str) -> None:
         mlflow.log_artifact(str(decision_path), artifact_path=PROMOTION_ARTIFACT_SUBDIR)
 
     if not result.approved:
+        _offer_drift_rollback_on_rejection(config)
         reason_msg = f" Reason: {result.reason}" if result.reason else " No reason provided."
         raise ValueError(f"Promotion rejected by user.{reason_msg}")
 

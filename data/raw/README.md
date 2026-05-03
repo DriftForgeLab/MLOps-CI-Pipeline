@@ -13,6 +13,16 @@ Tabular classification dataset. `data.csv` is tracked in git.
 Small JPG image dataset for testing the image classification pipeline.
 Images are tracked in git (small files).
 
+### cifar10 (`data/raw/cifar10/`)
+Imported CIFAR-10 dataset converted into the pipeline's ImageFolder PNG layout.
+
+- Source: https://www.cs.toronto.edu/~kriz/cifar.html
+- Import command: `python scripts/import_cifar10.py`
+- Pipeline config: `src/config/pipeline_cifar10.yaml`
+
+The generated PNG files are not tracked in git. The importer writes
+`data/raw/cifar10/images/<class>/*.png` plus `data/raw/cifar10/dataset.yaml`.
+
 ### drone_raw (`data/raw/drone_raw/`)
 Raw DNG aerial drone images used to demonstrate the ISP preprocessing pipeline.
 

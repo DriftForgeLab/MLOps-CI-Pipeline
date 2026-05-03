@@ -9,6 +9,7 @@ from src.pipeline.steps import (
     execute_stage,
     StageResult,
     _STAGE_REGISTRY,
+    _evaluation_stage,
     _model_analysis_stage,
     _promotion_stage,
 )
@@ -223,3 +224,29 @@ class TestPromotionStage:
                 _promotion_stage(config, VERSION_ID)
 
         assert not (output_dir / "drift_result.json").exists()
+
+
+class TestEvaluationStage:
+    def test_writes_official_test_report_when_present(self, tmp_path: Path):
+        config = _dummy_config()
+        config.output_dir = str(tmp_path / "outputs")
+
+        report = {
+            "metrics": {"accuracy": 0.8, "f1_score": 0.8},
+            "comparison": {"overall_verdict": "no_baseline", "has_production_model": False},
+            "official_test_report": {
+                "split": "test",
+                "metrics": {"accuracy": 0.81, "f1_score": 0.8},
+            },
+        }
+
+        with (
+            patch("src.pipeline.steps.evaluate", return_value=report),
+            patch("src.pipeline.steps.log_evaluation_to_mlflow"),
+            patch("src.pipeline.steps.log_comparison_to_mlflow"),
+        ):
+            _evaluation_stage(config, VERSION_ID)
+
+        output_dir = Path(config.output_dir)
+        assert (output_dir / "evaluation_report.json").exists()
+        assert (output_dir / "official_test_evaluation_report.json").exists()

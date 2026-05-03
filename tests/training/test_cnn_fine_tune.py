@@ -173,8 +173,8 @@ class TestRunTrainingFineTune:
     loop on synthetic data so the CNN forward/backward passes are exercised.
     """
 
-    def _make_npz(self, tmp_path: Path, n: int = 8) -> Path:
-        npz = tmp_path / "train.npz"
+    def _make_npz(self, tmp_path: Path, name: str, n: int = 8) -> Path:
+        npz = tmp_path / name
         X = np.random.rand(n, 8, 8, 3).astype(np.float32)
         y = np.array([0, 1] * (n // 2), dtype=np.int64)
         np.savez(npz, X=X, y=y)
@@ -195,7 +195,8 @@ class TestRunTrainingFineTune:
         """Patch filesystem and config so run_training can find its files."""
         preprocessed = tmp_path / "preprocessed"
         preprocessed.mkdir()
-        self._make_npz(preprocessed)
+        self._make_npz(preprocessed, "train.npz")
+        self._make_npz(preprocessed, "val.npz")
         self._make_feature_map(preprocessed)
 
         config = _make_pipeline_config()
@@ -206,7 +207,8 @@ class TestRunTrainingFineTune:
         version_dir.mkdir(parents=True, exist_ok=True)
 
         (tmp_path / "ds" / "v1" / "preprocessed").mkdir(parents=True, exist_ok=True)
-        self._make_npz(tmp_path / "ds" / "v1" / "preprocessed")
+        self._make_npz(tmp_path / "ds" / "v1" / "preprocessed", "train.npz")
+        self._make_npz(tmp_path / "ds" / "v1" / "preprocessed", "val.npz")
         self._make_feature_map(tmp_path / "ds" / "v1" / "preprocessed")
 
         return config
@@ -287,3 +289,33 @@ class TestRunTrainingFineTune:
                               if isinstance(m, torch.nn.Linear)
                               for p in m.parameters()]
         assert any(p.requires_grad for p in last_linear_params)
+
+    def test_restores_best_validation_checkpoint(self, tmp_path, monkeypatch):
+        """run_training should restore the epoch with the best validation score."""
+        from src.training.image_classification_cnn.train import run_training
+
+        config = self._patch_env(tmp_path, monkeypatch)
+        captured_states: list[dict[str, torch.Tensor]] = []
+        scores = iter([0.9, 0.1])
+
+        def fake_eval(model, loader, device):
+            captured_states.append({
+                name: tensor.detach().clone()
+                for name, tensor in model.state_dict().items()
+            })
+            return next(scores)
+
+        with (
+            patch("src.training.image_classification_cnn.train.load_training_config") as mock_cfg,
+            patch("src.training.image_classification_cnn.train._evaluate_model", side_effect=fake_eval),
+        ):
+            mock_cfg.return_value = _make_training_config()
+            result = run_training(config, "v1", fine_tune=False)
+
+        final_state = {
+            name: tensor.detach().clone()
+            for name, tensor in result.model.state_dict().items()
+        }
+        assert captured_states, "validation checkpoints should be captured during training"
+        assert final_state.keys() == captured_states[0].keys()
+        assert all(torch.equal(final_state[name], captured_states[0][name]) for name in final_state)

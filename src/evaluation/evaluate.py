@@ -17,6 +17,7 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
+import yaml
 
 from src.config.loader import PipelineConfig, load_evaluation_config, load_promotion_config
 from src.config.schema import CLASSIFICATION_TASK_TYPES, IMAGE_TASK_TYPES
@@ -24,6 +25,85 @@ from src.data.preprocess import PREPROCESSED_SUBDIR
 from src.promotion.comparator import compare_metrics, no_baseline_comparison
 
 logger = logging.getLogger(__name__)
+
+
+def _load_model(model_dir: Path):
+    pt_path = model_dir / "model.pt"
+    joblib_path = model_dir / "model.joblib"
+
+    if pt_path.exists():
+        import torch
+        from src.common.device import resolve_device
+
+        device = resolve_device()
+        model = torch.load(pt_path, weights_only=False, map_location="cpu")
+        if hasattr(model, "to"):
+            model.to(device)
+        return model
+    if joblib_path.exists():
+        return joblib.load(joblib_path)
+
+    raise FileNotFoundError(
+        f"Model artifact not found at '{model_dir}'. "
+        "Run the training stage before evaluation."
+    )
+
+
+def _load_split_arrays(
+    config: PipelineConfig,
+    preprocessed_dir: Path,
+    output_features: list[str],
+    target: str,
+    split_name: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Load one preprocessed split for evaluation."""
+    if config.task_type in IMAGE_TASK_TYPES:
+        split_npz_path = preprocessed_dir / f"{split_name}.npz"
+        if not split_npz_path.exists():
+            raise FileNotFoundError(
+                f"Preprocessed {split_name} split not found at '{split_npz_path}'. "
+                "Run the preprocessing stage before evaluation."
+            )
+        data = np.load(split_npz_path)
+        X, y_true = data["X"], data["y"]
+        if config.task_type == "image_classification_cnn" and X.ndim == 4:
+            X = X.transpose(0, 3, 1, 2)
+        return X, y_true
+
+    split_path = preprocessed_dir / f"{split_name}.csv"
+    if not split_path.exists():
+        raise FileNotFoundError(
+            f"Preprocessed {split_name} split not found at '{split_path}'. "
+            "Run the preprocessing stage before evaluation."
+        )
+    df = pd.read_csv(split_path)
+    return df[output_features].values, df[target].values
+
+
+def _build_split_report(
+    version_id: str,
+    task_type: str,
+    split_name: str,
+    metrics: dict,
+) -> dict:
+    return {
+        "model_version": version_id,
+        "dataset_version": version_id,
+        "task_type": task_type,
+        "evaluated_at": datetime.now(timezone.utc).isoformat(),
+        "split": split_name,
+        "metrics": metrics,
+    }
+
+
+def _should_run_official_test(version_dir: Path) -> bool:
+    yaml_path = version_dir / "dataset.yaml"
+    if not yaml_path.exists():
+        return False
+    with open(yaml_path) as f:
+        metadata = yaml.safe_load(f) or {}
+    split_meta = metadata.get("split") or {}
+    return bool(split_meta.get("preserved_original_test"))
 
 
 def evaluate(
@@ -48,34 +128,11 @@ def evaluate(
     # --- Load model ---
     eval_config = load_evaluation_config(Path(config.configs.evaluation))
     model_dir = artifact_dir / version_id / "model"
-    pt_path = model_dir / "model.pt"
-    joblib_path = model_dir / "model.joblib"
-
-    if pt_path.exists():
-        import torch
-        from src.common.device import resolve_device
-        device = resolve_device()
-        # Artefacts are CPU-only (metadata.py forces .cpu() before save), so
-        # map_location="cpu" is correct on disk; the model is then moved to
-        # the active device for inference.
-        model = torch.load(pt_path, weights_only=False, map_location="cpu")
-        if hasattr(model, "to"):
-            model.to(device)
-    elif joblib_path.exists():
-        model = joblib.load(joblib_path)
-    else:
-        raise FileNotFoundError(
-            f"Model artifact not found at '{model_dir}'. "
-            "Run the training stage before evaluation."
-        )
+    model = _load_model(model_dir)
 
     # --- Load feature map ---
-    preprocessed_dir = (
-        Path(config.data.processed)
-        / config.dataset
-        / version_id
-        / PREPROCESSED_SUBDIR
-    )
+    version_dir = Path(config.data.processed) / config.dataset / version_id
+    preprocessed_dir = version_dir / PREPROCESSED_SUBDIR
     feature_map_path = preprocessed_dir / "feature_map.json"
     if not feature_map_path.exists():
         raise FileNotFoundError(
@@ -89,28 +146,7 @@ def evaluate(
     target: str = feature_map["target"]
 
     # --- Load val split ---
-    if config.task_type in IMAGE_TASK_TYPES:
-        val_npz_path = preprocessed_dir / "val.npz"
-        if not val_npz_path.exists():
-            raise FileNotFoundError(
-                f"Preprocessed val split not found at '{val_npz_path}'. "
-                "Run the preprocessing stage before evaluation."
-            )
-        data = np.load(val_npz_path)
-        X, y_true = data["X"], data["y"]
-        if config.task_type == "image_classification_cnn" and X.ndim == 4:
-            X = X.transpose(0, 3, 1, 2)
-    else:
-        val_path = preprocessed_dir / "val.csv"
-        if not val_path.exists():
-            raise FileNotFoundError(
-                f"Preprocessed val split not found at '{val_path}'. "
-                "Run the preprocessing stage before evaluation."
-            )
-        df = pd.read_csv(val_path)
-        X = df[output_features].values
-        y_true = df[target].values
-
+    X, y_true = _load_split_arrays(config, preprocessed_dir, output_features, target, "val")
     y_pred = model.predict(X)
 
     # --- Compute metrics ---
@@ -141,9 +177,22 @@ def evaluate(
         "dataset_version": version_id,
         "task_type": config.task_type,
         "evaluated_at": datetime.now(timezone.utc).isoformat(),
+        "evaluation_split": "val",
         "metrics": metrics,
-        "comparison": comparison
+        "comparison": comparison,
     }
+
+    if _should_run_official_test(version_dir):
+        X_test, y_test = _load_split_arrays(config, preprocessed_dir, output_features, target, "test")
+        y_test_pred = model.predict(X_test)
+        test_metrics = _compute_metrics(y_test, y_test_pred, config.task_type, eval_config)
+        report["official_test_report"] = _build_split_report(
+            version_id=version_id,
+            task_type=config.task_type,
+            split_name="test",
+            metrics=test_metrics,
+        )
+        logger.info("  Official test evaluation complete: metrics=%s", test_metrics)
 
     logger.info(
         "  Evaluation complete: task_type=%s, metrics=%s",

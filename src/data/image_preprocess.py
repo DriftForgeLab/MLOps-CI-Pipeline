@@ -30,8 +30,16 @@ logger = logging.getLogger(__name__)
 
 # Bump this whenever the ISP pipeline logic changes (not just config) to
 # invalidate cached preprocessed NPZ files and force re-preprocessing.
-PIPELINE_VERSION = "1.0.0"
+# 1.1.0: photometric augmentation (brightness/contrast/saturation/random_crop)
+#        applied in [0,1] space before normalization, and is_drifted mask
+#        written into train.npz so fine-tuning can oversample and split drift_val.
+PIPELINE_VERSION = "1.1.0"
 PREPROCESSED_SUBDIR = "preprocessed"
+
+# Filename suffix used by prepare-drift-training when copying drifted images
+# into the raw dataset. Images carrying this suffix are flagged as drifted in
+# the is_drifted mask written into train.npz.
+_DRIFTED_FILENAME_SUFFIX = "_drifted"
 
 
 def _load_and_transform_images(
@@ -190,36 +198,129 @@ def _load_and_transform_raw_images(
     return np.stack(arrays), labels, paths
 
 
+def _random_crop_with_padding(
+    batch: np.ndarray,
+    padding: int,
+    rng: np.random.RandomState,
+) -> np.ndarray:
+    """Pad each image by ``padding`` on every side (reflect) then crop a random
+    H×W window so the output keeps the original spatial size.
+
+    Standard CIFAR augmentation. Operates on (N,H,W,C) or (N,H,W) arrays.
+    """
+    if padding <= 0:
+        return batch
+    if batch.ndim == 4:
+        pad_width = ((0, 0), (padding, padding), (padding, padding), (0, 0))
+    else:
+        pad_width = ((0, 0), (padding, padding), (padding, padding))
+    padded = np.pad(batch, pad_width, mode="reflect")
+    n, h, w = batch.shape[0], batch.shape[1], batch.shape[2]
+    out = np.empty_like(batch)
+    for i in range(n):
+        top = rng.randint(0, 2 * padding + 1)
+        left = rng.randint(0, 2 * padding + 1)
+        if batch.ndim == 4:
+            out[i] = padded[i, top:top + h, left:left + w, :]
+        else:
+            out[i] = padded[i, top:top + h, left:left + w]
+    return out
+
+
+def _apply_photometric_jitter(
+    batch: np.ndarray,
+    aug_config,
+    rng: np.random.RandomState,
+) -> np.ndarray:
+    """Apply per-image brightness/contrast/saturation jitter.
+
+    Operates on float arrays in [0, 1]. Output is clipped to [0, 1].
+    Saturation is a no-op for grayscale (3D) inputs.
+    """
+    n = batch.shape[0]
+    is_color = batch.ndim == 4
+
+    # Brightness: out = x * factor, factor ~ U[1-V, 1+V]
+    if aug_config.brightness_jitter > 0.0:
+        v = aug_config.brightness_jitter
+        factors = rng.uniform(max(0.0, 1.0 - v), 1.0 + v, size=n).astype(batch.dtype)
+        if is_color:
+            batch = batch * factors[:, None, None, None]
+        else:
+            batch = batch * factors[:, None, None]
+
+    # Contrast: out = (x - mean) * factor + mean, per-image grayscale mean
+    if aug_config.contrast_jitter > 0.0:
+        v = aug_config.contrast_jitter
+        factors = rng.uniform(max(0.0, 1.0 - v), 1.0 + v, size=n).astype(batch.dtype)
+        if is_color:
+            # Per-image scalar luminance mean (BT.601-ish equal-weight ok for jitter)
+            means = batch.mean(axis=(1, 2, 3), keepdims=True)
+            batch = (batch - means) * factors[:, None, None, None] + means
+        else:
+            means = batch.mean(axis=(1, 2), keepdims=True)
+            batch = (batch - means) * factors[:, None, None] + means
+
+    # Saturation: blend toward grayscale per image. Color only.
+    if is_color and aug_config.saturation_jitter > 0.0:
+        v = aug_config.saturation_jitter
+        factors = rng.uniform(max(0.0, 1.0 - v), 1.0 + v, size=n).astype(batch.dtype)
+        # ITU-R BT.601 luminance for the gray reference
+        gray = (
+            0.299 * batch[..., 0] + 0.587 * batch[..., 1] + 0.114 * batch[..., 2]
+        )[..., None]
+        batch = gray + (batch - gray) * factors[:, None, None, None]
+
+    return np.clip(batch, 0.0, 1.0)
+
+
 def _apply_augmentation(
     X: np.ndarray,
     y: np.ndarray,
     aug_config,
     random_seed: int,
-) -> tuple[np.ndarray, np.ndarray]:
+    is_drifted: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
     """Apply offline augmentation to training images.
 
-    Returns augmented copies appended to the original arrays.
+    Operates on float arrays in [0, 1] (call this BEFORE normalization).
+    Each augmented copy goes through, in order: random pad-and-crop,
+    horizontal flip, photometric jitter (brightness/contrast/saturation),
+    optional 90-degree rotation. Returns the original images plus
+    ``augmentation_factor - 1`` augmented copies.
+
+    The ``is_drifted`` mask, if given, is replicated across copies so the
+    augmented samples retain their drift label.
     """
     if not aug_config.enabled or aug_config.augmentation_factor <= 1:
-        return X, y
+        return X, y, is_drifted
 
     rng = np.random.RandomState(random_seed)
     augmented_X = [X]
     augmented_y = [y]
+    augmented_d = [is_drifted] if is_drifted is not None else None
 
     for _ in range(aug_config.augmentation_factor - 1):
         batch = X.copy()
 
+        if aug_config.random_crop_padding > 0:
+            batch = _random_crop_with_padding(batch, aug_config.random_crop_padding, rng)
+
         if aug_config.horizontal_flip:
-            # Flip along width axis
             flip_mask = rng.rand(len(batch)) > 0.5
             if batch.ndim == 4:  # (N, H, W, C)
                 batch[flip_mask] = batch[flip_mask, :, ::-1, :]
             else:  # (N, H, W) grayscale
                 batch[flip_mask] = batch[flip_mask, :, ::-1]
 
+        if (
+            aug_config.brightness_jitter > 0.0
+            or aug_config.contrast_jitter > 0.0
+            or aug_config.saturation_jitter > 0.0
+        ):
+            batch = _apply_photometric_jitter(batch, aug_config, rng)
+
         if aug_config.rotation_degrees > 0:
-            # Simple 90-degree rotation approximation
             for i in range(len(batch)):
                 k = rng.randint(0, 4)  # 0, 90, 180, 270 degrees
                 if k > 0:
@@ -227,8 +328,13 @@ def _apply_augmentation(
 
         augmented_X.append(batch)
         augmented_y.append(y.copy())
+        if augmented_d is not None:
+            augmented_d.append(is_drifted.copy())
 
-    return np.concatenate(augmented_X), np.concatenate(augmented_y)
+    out_X = np.concatenate(augmented_X)
+    out_y = np.concatenate(augmented_y)
+    out_d = np.concatenate(augmented_d) if augmented_d is not None else None
+    return out_X, out_y, out_d
 
 
 def run_image_preprocessing(
@@ -289,13 +395,15 @@ def run_image_preprocessing(
             "preprocessing_raw_image.yaml as a starting point."
         )
 
-    # Build class mapping from training split (cached for reuse in the loop)
+    # Build class mapping from training split (cached for reuse in the loop).
+    # We also capture training file paths so we can flag drifted samples (those
+    # whose filename was tagged with the _drifted suffix by prepare-drift-training).
     if img_config.raw_input:
-        X_train_raw, train_labels, _ = _load_and_transform_raw_images(
+        X_train_raw, train_labels, train_paths = _load_and_transform_raw_images(
             train_images_dir, img_config, expected_formats
         )
     else:
-        X_train_raw, train_labels, _ = _load_and_transform_images(
+        X_train_raw, train_labels, train_paths = _load_and_transform_images(
             train_images_dir, img_config.target_size, img_config.color_mode, expected_formats
         )
 
@@ -303,24 +411,24 @@ def run_image_preprocessing(
     class_to_index = {name: idx for idx, name in enumerate(class_names)}
     index_to_class = {str(idx): name for idx, name in enumerate(class_names)}
 
-    # Scale to [0, 1] before computing stats.
+    train_is_drifted = np.array(
+        [_DRIFTED_FILENAME_SUFFIX in p.stem for p in train_paths],
+        dtype=np.bool_,
+    )
+    n_drifted = int(train_is_drifted.sum())
+    if n_drifted > 0:
+        logger.info(
+            "  Detected %d/%d training images flagged as drifted (suffix '%s').",
+            n_drifted, len(train_is_drifted), _DRIFTED_FILENAME_SUFFIX,
+        )
+
+    # Scale to [0, 1].
     # JPG/PNG images come from PIL as [0, 255] and need dividing.
     # Raw ISP images are already [0, 1] — skip the division.
+    # We do this BEFORE computing stats and BEFORE augmentation so that
+    # photometric jitter operates in a well-defined [0, 1] colour space.
     if img_config.normalize and not img_config.raw_input:
         X_train_raw = X_train_raw / 255.0
-
-    # Compute normalization stats from training set ONLY (leak-proof)
-    if img_config.normalize:
-        if X_train_raw.ndim == 4:  # (N, H, W, C)
-            mean = X_train_raw.mean(axis=(0, 1, 2))
-            std = X_train_raw.std(axis=(0, 1, 2))
-        else:  # (N, H, W) grayscale
-            mean = np.array([X_train_raw.mean()])
-            std = np.array([X_train_raw.std()])
-        std = np.where(std == 0, 1.0, std)  # avoid division by zero
-    else:
-        mean = None
-        std = None
 
     # Resolve random seed: prefer explicit parameter, fall back to split metadata
     if random_seed is None:
@@ -333,13 +441,26 @@ def run_image_preprocessing(
             logger.warning("No random_seed provided and no split metadata found — defaulting to 42")
             random_seed = 42
 
-    # Process all splits
+    # Compute normalization stats from training set ONLY (leak-proof), using
+    # the unaugmented training pixels in [0, 1] space.
+    if img_config.normalize:
+        if X_train_raw.ndim == 4:  # (N, H, W, C)
+            mean = X_train_raw.mean(axis=(0, 1, 2))
+            std = X_train_raw.std(axis=(0, 1, 2))
+        else:  # (N, H, W) grayscale
+            mean = np.array([X_train_raw.mean()])
+            std = np.array([X_train_raw.std()])
+        std = np.where(std == 0, 1.0, std)  # avoid division by zero
+    else:
+        mean = None
+        std = None
+
     norm_stats = {"mean": mean.tolist() if mean is not None else None,
                   "std": std.tolist() if std is not None else None}
 
     for split_name in ("train", "val", "test"):
         if split_name == "train":
-            # Reuse cached training data (already loaded above)
+            # Reuse cached training data (already in [0, 1])
             X_raw, labels = X_train_raw.copy(), list(train_labels)
         else:
             split_images_dir = version_dir / split_name / "images"
@@ -351,14 +472,9 @@ def run_image_preprocessing(
                 X_raw, labels, _ = _load_and_transform_images(
                     split_images_dir, img_config.target_size, img_config.color_mode, expected_formats
                 )
-
-        # Normalize using training statistics.
-        # For JPG/PNG: divide by 255 first (PIL returns [0, 255]).
-        # For raw ISP: already [0, 1] — skip the division.
-        if img_config.normalize:
-            if split_name != "train" and not img_config.raw_input:
+            # val/test: bring to [0, 1] (raw ISP outputs are already there)
+            if img_config.normalize and not img_config.raw_input:
                 X_raw = X_raw / 255.0
-            X_raw = (X_raw - mean) / std
 
         # Encode labels (with descriptive error for unseen classes)
         unknown = set(labels) - set(class_to_index)
@@ -368,15 +484,30 @@ def run_image_preprocessing(
             )
         y = np.array([class_to_index[lbl] for lbl in labels])
 
-        # Augment training set only
+        # Augment training set only — runs on [0, 1] data so photometric
+        # jitter is meaningful. Replicate the is_drifted mask across copies.
         if split_name == "train":
-            X_raw, y = _apply_augmentation(X_raw, y, img_config.augmentation, random_seed)
+            X_raw, y, split_is_drifted = _apply_augmentation(
+                X_raw, y, img_config.augmentation, random_seed, is_drifted=train_is_drifted
+            )
+        else:
+            split_is_drifted = None
+
+        # Apply z-score normalization AFTER augmentation.
+        if img_config.normalize:
+            X_raw = (X_raw - mean) / std
 
         # Flatten (legacy option — ignored for CNN pipelines; flatten defaults to False)
         if img_config.flatten:
             X_raw = X_raw.reshape(X_raw.shape[0], -1)
 
-        atomic_write_npz(preprocessed_dir / f"{split_name}.npz", X=X_raw, y=y)
+        if split_name == "train" and split_is_drifted is not None:
+            atomic_write_npz(
+                preprocessed_dir / f"{split_name}.npz",
+                X=X_raw, y=y, is_drifted=split_is_drifted,
+            )
+        else:
+            atomic_write_npz(preprocessed_dir / f"{split_name}.npz", X=X_raw, y=y)
 
     # Determine image shape and feature count
     if img_config.color_mode == "grayscale":
@@ -455,6 +586,10 @@ def _compute_image_preprocess_hash(img_config, metadata: dict, train_manifest_ha
         "augmentation_factor": img_config.augmentation.augmentation_factor,
         "horizontal_flip": img_config.augmentation.horizontal_flip,
         "rotation_degrees": img_config.augmentation.rotation_degrees,
+        "random_crop_padding": img_config.augmentation.random_crop_padding,
+        "brightness_jitter": img_config.augmentation.brightness_jitter,
+        "contrast_jitter": img_config.augmentation.contrast_jitter,
+        "saturation_jitter": img_config.augmentation.saturation_jitter,
         "raw_input": img_config.raw_input,
         "task_type": metadata.get("task_type"),
         "target": metadata.get("target"),

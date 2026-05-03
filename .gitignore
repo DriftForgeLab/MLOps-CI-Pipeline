@@ -24,3 +24,4 @@ data/raw/drone_raw/
 data/evaluation/drifted_holdout/**
 build/
 data/raw/fivek/
+data/raw/cifar10/

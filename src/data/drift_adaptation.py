@@ -37,6 +37,11 @@ _DRIFTED_SUFFIX = "_drifted"
 # Directory name for the baseline metrics file inside the holdout directory.
 _BASELINE_FILENAME = "baseline_metrics.json"
 
+# Subdirectory under data/raw/<dataset>/ where per-attempt manifests live.
+# Each manifest records exactly which files were copied so a rejected
+# fine-tuning experiment can be rolled back cleanly.
+_DRIFT_ATTEMPTS_SUBDIR = ".drift_attempts"
+
 
 # =============================================================================
 # Public API
@@ -200,6 +205,226 @@ def copy_training_images_to_dataset(
         total, raw_dataset_images_dir,
     )
     return copied
+
+
+# =============================================================================
+# Drift-attempt manifests
+# =============================================================================
+# Each prepare-drift-training invocation writes a manifest under
+# data/raw/<dataset>/.drift_attempts/<timestamp>.json listing every file it
+# copied into the raw dataset, the source drifted_dir, the holdout dir, and
+# the baseline metrics path. A rejected or aborted fine-tune can then be
+# rolled back cleanly with rollback-drift-training, which deletes exactly
+# those files (and optionally the holdout) without touching unrelated data.
+
+
+def _attempts_dir(raw_dataset_dir: Path) -> Path:
+    """Resolve data/raw/<dataset>/.drift_attempts/."""
+    return Path(raw_dataset_dir) / _DRIFT_ATTEMPTS_SUBDIR
+
+
+def write_drift_attempt_manifest(
+    raw_dataset_dir: Path,
+    drifted_dir: Path,
+    raw_images_dir: Path,
+    holdout_dir: Path,
+    copied: dict[str, list[Path]],
+    baseline_metrics: dict | None,
+    holdout_ratio: float,
+    random_seed: int,
+) -> Path:
+    """Persist a per-attempt manifest of drifted files added to the dataset.
+
+    The manifest file is named with a UTC timestamp (``<YYYYMMDD_HHMMSS>.json``)
+    and includes:
+      - source drifted_dir, raw_images_dir, holdout_dir
+      - the holdout_ratio and random_seed used for the split
+      - the baseline metrics summary (acc / f1 / precision / recall) at write time
+      - per-class destination file lists (relative to raw_images_dir)
+
+    Args:
+        raw_dataset_dir:  ``data/raw/<dataset>/`` (NOT the images/ subdir).
+        drifted_dir:      Source directory passed to prepare-drift-training.
+        raw_images_dir:   ``data/raw/<dataset>/images/`` — destination root.
+        holdout_dir:      Holdout directory under data/evaluation/.
+        copied:           Output of ``copy_training_images_to_dataset`` (dict
+                          mapping class name -> absolute destination Paths).
+        baseline_metrics: Output of ``evaluate_on_holdout_dir``, or None if
+                          no holdout was carved out.
+        holdout_ratio:    Holdout fraction used.
+        random_seed:      Seed used for the stratified split.
+
+    Returns:
+        Path to the written manifest file.
+    """
+    attempts_dir = _attempts_dir(raw_dataset_dir)
+    attempts_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    manifest_path = attempts_dir / f"{timestamp}.json"
+
+    raw_images_dir = Path(raw_images_dir).resolve()
+    files_by_class: dict[str, list[str]] = {}
+    total = 0
+    for class_name, paths in copied.items():
+        rel_paths: list[str] = []
+        for p in paths:
+            try:
+                rel = Path(p).resolve().relative_to(raw_images_dir).as_posix()
+            except ValueError:
+                # Fall back to the bare filename if the path is somehow not
+                # under raw_images_dir (shouldn't happen in normal flow).
+                rel = Path(p).name
+            rel_paths.append(rel)
+            total += 1
+        files_by_class[class_name] = rel_paths
+
+    payload = {
+        "attempt_id": timestamp,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "drifted_dir": str(Path(drifted_dir)),
+        "raw_images_dir": str(raw_images_dir),
+        "holdout_dir": str(Path(holdout_dir)),
+        "holdout_ratio": holdout_ratio,
+        "random_seed": random_seed,
+        "n_files_added": total,
+        "files_by_class": files_by_class,
+        "baseline_metrics": baseline_metrics,
+    }
+    atomic_write_json(manifest_path, payload)
+    logger.info(
+        "Drift attempt manifest written to '%s' (tracked %d file(s) for rollback).",
+        manifest_path, total,
+    )
+    return manifest_path
+
+
+def list_drift_attempts(raw_dataset_dir: Path) -> list[dict]:
+    """Return all drift-attempt manifests under raw_dataset_dir, oldest first.
+
+    Each entry carries the manifest payload with an extra ``manifest_path``
+    field so callers can pass it straight to ``rollback_drift_attempt``.
+    Returns an empty list if no attempts have been recorded.
+    """
+    attempts_dir = _attempts_dir(raw_dataset_dir)
+    if not attempts_dir.exists():
+        return []
+    out: list[dict] = []
+    for manifest_path in sorted(attempts_dir.glob("*.json")):
+        try:
+            with open(manifest_path) as f:
+                payload = json.load(f)
+        except Exception as exc:
+            logger.warning("Skipping unreadable manifest '%s': %s", manifest_path, exc)
+            continue
+        payload["manifest_path"] = str(manifest_path)
+        out.append(payload)
+    return out
+
+
+def latest_drift_attempt(raw_dataset_dir: Path) -> dict | None:
+    """Return the most recent drift-attempt manifest, or None if there are none."""
+    attempts = list_drift_attempts(raw_dataset_dir)
+    return attempts[-1] if attempts else None
+
+
+def rollback_drift_attempt(
+    manifest_path: Path,
+    remove_holdout: bool = False,
+) -> dict:
+    """Delete every file recorded in a drift-attempt manifest.
+
+    Walks ``files_by_class`` and unlinks each entry under ``raw_images_dir``,
+    then removes the manifest itself. Files that have already been deleted
+    (e.g. by a prior cleanup) are counted as "missing" and do not raise.
+    Empty per-class directories left behind are removed; the parent
+    ``images/`` directory is preserved.
+
+    Args:
+        manifest_path:  Path to the manifest JSON written by
+                        ``write_drift_attempt_manifest``.
+        remove_holdout: If True, also recursively remove the holdout directory
+                        recorded in the manifest. Defaults to False so callers
+                        can keep historical baseline measurements.
+
+    Returns:
+        Dict with ``removed``, ``missing``, ``manifest_path``, ``holdout_removed``.
+
+    Raises:
+        FileNotFoundError: If the manifest does not exist.
+        ValueError:        If the manifest is malformed.
+    """
+    manifest_path = Path(manifest_path)
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"Manifest not found: '{manifest_path}'")
+    with open(manifest_path) as f:
+        payload = json.load(f)
+
+    raw_images_dir = payload.get("raw_images_dir")
+    files_by_class = payload.get("files_by_class")
+    if not raw_images_dir or not isinstance(files_by_class, dict):
+        raise ValueError(
+            f"Manifest '{manifest_path}' is missing required fields "
+            "(raw_images_dir, files_by_class)."
+        )
+    raw_images_dir = Path(raw_images_dir)
+
+    removed = 0
+    missing = 0
+    touched_class_dirs: set[Path] = set()
+    for class_name, rel_paths in files_by_class.items():
+        class_dir = raw_images_dir / class_name
+        touched_class_dirs.add(class_dir)
+        for rel in rel_paths:
+            target = (raw_images_dir / rel).resolve()
+            try:
+                target.relative_to(raw_images_dir.resolve())
+            except ValueError:
+                logger.warning(
+                    "Refusing to delete '%s' — outside raw_images_dir '%s'.",
+                    target, raw_images_dir,
+                )
+                continue
+            if target.exists():
+                try:
+                    target.unlink()
+                    removed += 1
+                except OSError as exc:
+                    logger.warning("Could not remove '%s': %s", target, exc)
+            else:
+                missing += 1
+
+    # Tidy up empty per-class directories created solely by drifted images.
+    for class_dir in touched_class_dirs:
+        try:
+            if class_dir.exists() and not any(class_dir.iterdir()):
+                class_dir.rmdir()
+        except OSError:
+            pass
+
+    holdout_removed = False
+    if remove_holdout:
+        holdout_dir = payload.get("holdout_dir")
+        if holdout_dir:
+            holdout_path = Path(holdout_dir)
+            if holdout_path.exists():
+                shutil.rmtree(holdout_path, ignore_errors=True)
+                holdout_removed = True
+
+    try:
+        manifest_path.unlink()
+    except OSError as exc:
+        logger.warning("Could not remove manifest '%s': %s", manifest_path, exc)
+
+    logger.info(
+        "Rolled back drift attempt '%s': removed=%d, missing=%d, holdout_removed=%s.",
+        manifest_path.name, removed, missing, holdout_removed,
+    )
+    return {
+        "manifest_path": str(manifest_path),
+        "removed": removed,
+        "missing": missing,
+        "holdout_removed": holdout_removed,
+    }
 
 
 def save_holdout_images(

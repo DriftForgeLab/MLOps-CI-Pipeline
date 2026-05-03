@@ -217,6 +217,19 @@ def _validate_training(raw: dict) -> list[str]:
                 v = ft["learning_rate"]
                 if isinstance(v, bool) or not isinstance(v, (int, float)) or v <= 0:
                     errors.append(f"'fine_tune.learning_rate' must be a positive number, got {v!r}")
+            if "oversample_drift_ratio" in ft:
+                v = ft["oversample_drift_ratio"]
+                if v is not None:
+                    if isinstance(v, bool) or not isinstance(v, (int, float)) or not (0.0 < v < 1.0):
+                        errors.append(
+                            f"'fine_tune.oversample_drift_ratio' must be null or a number in (0.0, 1.0), got {v!r}"
+                        )
+            if "drift_val_ratio" in ft:
+                v = ft["drift_val_ratio"]
+                if isinstance(v, bool) or not isinstance(v, (int, float)) or not (0.0 < v < 1.0):
+                    errors.append(
+                        f"'fine_tune.drift_val_ratio' must be a number in (0.0, 1.0), got {v!r}"
+                    )
 
     return errors
 
@@ -267,11 +280,20 @@ def _build_training_config(raw: dict) -> TrainingConfig:
             dropout=raw_arch["dropout"],
         )
         ft_raw = raw.get("fine_tune") or {}
+        oversample_raw = ft_raw.get("oversample_drift_ratio", None)
+        oversample_drift_ratio: float | None
+        if oversample_raw is None:
+            oversample_drift_ratio = None
+        else:
+            oversample_drift_ratio = float(oversample_raw)
         fine_tune = FineTuneConfig(
             enabled=bool(ft_raw.get("enabled", False)),
             epochs=int(ft_raw.get("epochs", 5)),
             learning_rate=float(ft_raw.get("learning_rate", 0.0001)),
             freeze_backbone=bool(ft_raw.get("freeze_backbone", False)),
+            oversample_drift_ratio=oversample_drift_ratio,
+            use_drift_val_for_best_epoch=bool(ft_raw.get("use_drift_val_for_best_epoch", False)),
+            drift_val_ratio=float(ft_raw.get("drift_val_ratio", 0.15)),
         )
         return TrainingConfig(
             model=ModelConfig(

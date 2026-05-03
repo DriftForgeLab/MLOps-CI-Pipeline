@@ -10,6 +10,7 @@
 # =============================================================================
 from __future__ import annotations
 
+import copy
 import json
 import logging
 from datetime import datetime, timezone
@@ -19,7 +20,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import yaml
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, Subset, TensorDataset, WeightedRandomSampler
 
 from src.common.device import resolve_device
 from src.config.loader import PipelineConfig, load_training_config
@@ -145,6 +146,108 @@ def _load_production_weights(config: PipelineConfig, model: "SimpleCNN") -> bool
         return False
 
 
+def _load_image_split_npz(
+    preprocessed_dir: Path, split_name: str
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    """Load one preprocessed image split and convert it to NCHW for PyTorch.
+
+    Returns ``(X_nchw, y, is_drifted)`` where ``is_drifted`` is the optional
+    boolean mask written into ``train.npz`` by image preprocessing when any
+    training images carried the ``_drifted`` filename suffix. Returns
+    ``None`` for ``is_drifted`` if the array is absent (older NPZ files, or
+    val/test splits which never carry the mask).
+    """
+    npz_path = preprocessed_dir / f"{split_name}.npz"
+    if not npz_path.exists():
+        raise FileNotFoundError(f"Preprocessed {split_name} data not found: {npz_path}")
+
+    data = np.load(npz_path)
+    X_np = data["X"]
+    y_np = data["y"]
+    if X_np.ndim == 4:
+        X_np = X_np.transpose(0, 3, 1, 2)
+    elif X_np.ndim == 3:
+        X_np = X_np[:, np.newaxis, :, :]
+    is_drifted_np: np.ndarray | None = None
+    if "is_drifted" in data.files:
+        is_drifted_np = data["is_drifted"].astype(np.bool_)
+    return X_np, y_np, is_drifted_np
+
+
+def _build_drift_val_indices(
+    is_drifted: np.ndarray,
+    y: np.ndarray,
+    drift_val_ratio: float,
+    seed: int,
+) -> np.ndarray:
+    """Pick a stratified slice of drifted training samples for drift_val.
+
+    Stratifies by class so each class contributes the same fraction.
+    Returns an int64 array of indices into the training arrays.
+    """
+    rng = np.random.RandomState(seed)
+    drifted_idx = np.flatnonzero(is_drifted)
+    if drifted_idx.size == 0:
+        return np.empty((0,), dtype=np.int64)
+    chosen: list[int] = []
+    for cls in np.unique(y[drifted_idx]):
+        cls_idx = drifted_idx[y[drifted_idx] == cls]
+        n_take = max(1, int(round(len(cls_idx) * drift_val_ratio)))
+        n_take = min(n_take, len(cls_idx) - 1) if len(cls_idx) > 1 else 0
+        if n_take <= 0:
+            continue
+        picks = rng.choice(cls_idx, size=n_take, replace=False)
+        chosen.extend(int(i) for i in picks)
+    return np.array(sorted(chosen), dtype=np.int64)
+
+
+def _build_oversample_weights(
+    is_drifted: np.ndarray,
+    target_drift_ratio: float,
+) -> np.ndarray:
+    """Compute per-sample weights so a WeightedRandomSampler yields drifted
+    samples at the requested expected fraction.
+
+    With ``D`` drifted and ``C`` clean samples and target fraction ``r``:
+        w_drift / w_clean = (r / (1 - r)) * (C / D)
+    Setting ``w_clean = 1.0`` gives the formula below. Weights are not
+    normalised — ``WeightedRandomSampler`` handles that.
+    """
+    n_drifted = int(is_drifted.sum())
+    n_clean = int(len(is_drifted) - n_drifted)
+    if n_drifted == 0 or n_clean == 0:
+        return np.ones(len(is_drifted), dtype=np.float64)
+    w_drift = (target_drift_ratio / (1.0 - target_drift_ratio)) * (n_clean / n_drifted)
+    weights = np.where(is_drifted, w_drift, 1.0).astype(np.float64)
+    return weights
+
+
+def _evaluate_model(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+) -> float:
+    """Compute classification accuracy on a validation loader."""
+    was_training = model.training
+    model.eval()
+
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for X_batch, y_batch in loader:
+            X_batch = X_batch.to(device)
+            y_batch = y_batch.to(device)
+            logits = model(X_batch)
+            preds = logits.argmax(dim=1)
+            correct += int((preds == y_batch).sum().item())
+            total += int(y_batch.numel())
+
+    if was_training:
+        model.train()
+
+    return (correct / total) if total > 0 else 0.0
+
+
 def run_training(config: PipelineConfig, version_id: str, fine_tune: bool = False) -> TrainingResult:
     """Train a CNN on preprocessed image data (NPZ with 4D arrays).
 
@@ -205,19 +308,8 @@ def run_training(config: PipelineConfig, version_id: str, fine_tune: bool = Fals
     in_channels = image_shape[2] if len(image_shape) == 3 else 1
 
     # --- Load NPZ data ---
-    train_npz_path = preprocessed_dir / "train.npz"
-    if not train_npz_path.exists():
-        raise FileNotFoundError(f"Preprocessed training data not found: {train_npz_path}")
-
-    data = np.load(train_npz_path)
-    X_np = data["X"]  # (N, H, W, C)
-    y_np = data["y"]  # (N,)
-
-    # Transpose to (N, C, H, W) for PyTorch
-    if X_np.ndim == 4:
-        X_np = X_np.transpose(0, 3, 1, 2)
-    elif X_np.ndim == 3:
-        X_np = X_np[:, np.newaxis, :, :]
+    X_np, y_np, is_drifted_np = _load_image_split_npz(preprocessed_dir, "train")
+    X_val_np, y_val_np, _ = _load_image_split_npz(preprocessed_dir, "val")
 
     device = resolve_device()
     logger.info("  CNN training device: %s", device)
@@ -231,29 +323,19 @@ def run_training(config: PipelineConfig, version_id: str, fine_tune: bool = Fals
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
-    X_tensor = torch.tensor(X_np, dtype=torch.float32).to(device)
-    y_tensor = torch.tensor(y_np, dtype=torch.long).to(device)
+    X_tensor = torch.tensor(X_np, dtype=torch.float32)
+    y_tensor = torch.tensor(y_np, dtype=torch.long)
+    X_val_tensor = torch.tensor(X_val_np, dtype=torch.float32)
+    y_val_tensor = torch.tensor(y_val_np, dtype=torch.long)
 
-    dataset = TensorDataset(X_tensor, y_tensor)
+    full_train_dataset = TensorDataset(X_tensor, y_tensor)
+    val_dataset = TensorDataset(X_val_tensor, y_val_tensor)
     shuffle_gen = torch.Generator().manual_seed(config.random_seed)
-    # pin_memory only helps for CUDA host->device transfer. DirectML and CPU
-    # do not benefit, and DirectML may warn. num_workers=0 because the dataset
-    # already lives in memory (and on the active device) — workers would only
-    # add IPC overhead.
-    loader = DataLoader(
-        dataset,
-        batch_size=hp.batch_size,
-        shuffle=True,
-        generator=shuffle_gen,
-        pin_memory=(device.type == "cuda"),
-        num_workers=0,
-    )
-
-    model = SimpleCNN(num_classes, in_channels, image_height, image_width, arch).to(device)
 
     # --- Fine-tuning: load Production weights if requested ---
     ft_cfg = training_config.fine_tune
     weights_loaded = False
+    model = SimpleCNN(num_classes, in_channels, image_height, image_width, arch).to(device)
     if fine_tune:
         weights_loaded = _load_production_weights(config, model)
         if weights_loaded and ft_cfg.freeze_backbone:
@@ -265,6 +347,108 @@ def run_training(config: PipelineConfig, version_id: str, fine_tune: bool = Fals
             for param in last_linear.parameters():
                 param.requires_grad = True
             logger.info("  Fine-tune: backbone frozen — training classifier head only.")
+
+    # --- Drift-aware training arrangement (fine-tune only) ---
+    # When fine-tuning with a drifted training set we can:
+    #   1) carve out a stratified drift_val slice and use it for best-epoch
+    #      selection (more honest than the clean val split), and
+    #   2) oversample the remaining drifted samples so they make up a target
+    #      fraction of each batch (combats the 4%-minority dilution problem).
+    use_drift_val = (
+        fine_tune
+        and weights_loaded
+        and ft_cfg.use_drift_val_for_best_epoch
+        and is_drifted_np is not None
+        and bool(is_drifted_np.any())
+    )
+    train_indices = np.arange(len(full_train_dataset), dtype=np.int64)
+    drift_val_loader: DataLoader | None = None
+    if use_drift_val:
+        drift_val_idx = _build_drift_val_indices(
+            is_drifted_np, y_np, ft_cfg.drift_val_ratio, config.random_seed
+        )
+        if drift_val_idx.size > 0:
+            train_indices = np.setdiff1d(train_indices, drift_val_idx, assume_unique=False)
+            drift_val_subset = Subset(full_train_dataset, drift_val_idx.tolist())
+            drift_val_loader = DataLoader(
+                drift_val_subset,
+                batch_size=hp.batch_size,
+                shuffle=False,
+                pin_memory=(device.type == "cuda"),
+                num_workers=0,
+            )
+            logger.info(
+                "  Fine-tune: held out %d drifted sample(s) as drift_val for best-epoch selection.",
+                int(drift_val_idx.size),
+            )
+        else:
+            use_drift_val = False
+            logger.warning(
+                "  Fine-tune: use_drift_val_for_best_epoch=True but no drifted samples could be held out — "
+                "falling back to standard val for best-epoch selection."
+            )
+
+    train_dataset = Subset(full_train_dataset, train_indices.tolist())
+
+    sampler: WeightedRandomSampler | None = None
+    use_oversample = (
+        fine_tune
+        and weights_loaded
+        and ft_cfg.oversample_drift_ratio is not None
+        and is_drifted_np is not None
+        and bool(is_drifted_np.any())
+    )
+    if use_oversample:
+        is_drifted_train = is_drifted_np[train_indices]
+        if is_drifted_train.any() and (~is_drifted_train).any():
+            weights = _build_oversample_weights(is_drifted_train, ft_cfg.oversample_drift_ratio)
+            sampler = WeightedRandomSampler(
+                weights=torch.as_tensor(weights, dtype=torch.double),
+                num_samples=len(weights),
+                replacement=True,
+                generator=torch.Generator().manual_seed(config.random_seed),
+            )
+            logger.info(
+                "  Fine-tune: oversampling drift to ~%.0f%% per batch "
+                "(%d drifted / %d clean in training pool).",
+                ft_cfg.oversample_drift_ratio * 100,
+                int(is_drifted_train.sum()),
+                int((~is_drifted_train).sum()),
+            )
+        else:
+            logger.info(
+                "  Fine-tune: oversample_drift_ratio set but training pool has only one class "
+                "of drift status — uniform shuffling will be used."
+            )
+
+    # pin_memory only helps for CUDA host->device transfer. DirectML and CPU
+    # do not benefit, and DirectML may warn. num_workers=0 because the dataset
+    # already lives in memory (and on the active device) — workers would only
+    # add IPC overhead.
+    if sampler is not None:
+        loader = DataLoader(
+            train_dataset,
+            batch_size=hp.batch_size,
+            sampler=sampler,
+            pin_memory=(device.type == "cuda"),
+            num_workers=0,
+        )
+    else:
+        loader = DataLoader(
+            train_dataset,
+            batch_size=hp.batch_size,
+            shuffle=True,
+            generator=shuffle_gen,
+            pin_memory=(device.type == "cuda"),
+            num_workers=0,
+        )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=hp.batch_size,
+        shuffle=False,
+        pin_memory=(device.type == "cuda"),
+        num_workers=0,
+    )
 
     # Choose hyperparams: fine-tune overrides when weights loaded successfully
     if fine_tune and weights_loaded:
@@ -283,9 +467,15 @@ def run_training(config: PipelineConfig, version_id: str, fine_tune: bool = Fals
     criterion = nn.CrossEntropyLoss()
 
     model.train()
+    best_score = float("-inf")
+    best_epoch = 0
+    best_state: dict[str, torch.Tensor] | None = None
+    selection_split = "drift_val" if drift_val_loader is not None else "val"
     for epoch in range(epochs):
         total_loss = 0.0
         for X_batch, y_batch in loader:
+            X_batch = X_batch.to(device)
+            y_batch = y_batch.to(device)
             optimizer.zero_grad()
             output = model(X_batch)
             loss = criterion(output, y_batch)
@@ -293,11 +483,36 @@ def run_training(config: PipelineConfig, version_id: str, fine_tune: bool = Fals
             optimizer.step()
             total_loss += loss.item()
         avg_loss = total_loss / len(loader)
-        logger.info("  Epoch %d/%d — loss: %.4f", epoch + 1, epochs, avg_loss)
+        val_accuracy = _evaluate_model(model, val_loader, device)
+        drift_val_accuracy: float | None = None
+        if drift_val_loader is not None:
+            drift_val_accuracy = _evaluate_model(model, drift_val_loader, device)
+        score = drift_val_accuracy if drift_val_accuracy is not None else val_accuracy
+        if score > best_score:
+            best_score = score
+            best_epoch = epoch + 1
+            best_state = copy.deepcopy(model.state_dict())
+        if drift_val_accuracy is not None:
+            logger.info(
+                "  Epoch %d/%d — loss: %.4f — val_accuracy: %.4f — drift_val_accuracy: %.4f",
+                epoch + 1, epochs, avg_loss, val_accuracy, drift_val_accuracy,
+            )
+        else:
+            logger.info(
+                "  Epoch %d/%d — loss: %.4f — val_accuracy: %.4f",
+                epoch + 1, epochs, avg_loss, val_accuracy,
+            )
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
 
     logger.info(
-        "  CNN training complete: %d classes, %d samples",
-        num_classes, len(X_tensor),
+        "  CNN training complete: %d classes, %d samples — best %s_accuracy=%.4f at epoch %d",
+        num_classes,
+        len(train_dataset),
+        selection_split,
+        best_score,
+        best_epoch,
     )
 
     hyperparameters = dict(vars(hp))
@@ -310,6 +525,15 @@ def run_training(config: PipelineConfig, version_id: str, fine_tune: bool = Fals
     ]
     hyperparameters["fc_units"] = arch.fc_units
     hyperparameters["dropout"] = arch.dropout
+    hyperparameters["best_val_accuracy"] = round(best_score, 4) if best_epoch else None
+    hyperparameters["best_val_split"] = selection_split if best_epoch else None
+    hyperparameters["best_epoch"] = best_epoch if best_epoch else None
+    hyperparameters["oversample_drift_ratio"] = (
+        ft_cfg.oversample_drift_ratio if (fine_tune and weights_loaded and sampler is not None) else None
+    )
+    hyperparameters["use_drift_val_for_best_epoch"] = (
+        bool(use_drift_val) if (fine_tune and weights_loaded) else None
+    )
 
     return TrainingResult(
         model=model,
@@ -318,5 +542,5 @@ def run_training(config: PipelineConfig, version_id: str, fine_tune: bool = Fals
         dataset_version_id=version_id,
         random_seed=config.random_seed,
         trained_at=datetime.now(timezone.utc).isoformat(),
-        train_rows=len(X_tensor),
+        train_rows=len(train_dataset),
     )

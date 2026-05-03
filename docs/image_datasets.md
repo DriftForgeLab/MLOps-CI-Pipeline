@@ -102,6 +102,35 @@ configs:
 For raw DNG datasets, use `pipeline_raw_image.yaml` instead, which points to
 `preprocessing_raw_image.yaml`.
 
+### CIFAR-10 quick start
+
+```bash
+python scripts/import_cifar10.py
+run-pipeline --config src/config/pipeline_cifar10.yaml
+```
+
+The importer downloads CIFAR-10 through `torchvision`, converts the train and
+test splits into deterministic PNG filenames, and writes them under:
+
+```text
+data/raw/cifar10/
+  dataset.yaml
+  images/
+    airplane/
+    automobile/
+    bird/
+    cat/
+    deer/
+    dog/
+    frog/
+    horse/
+    ship/
+    truck/
+```
+
+`src/config/preprocessing_cifar10.yaml` preserves the native `32x32` input size
+instead of upscaling to the generic `64x64` image default.
+
 ## Architecture Configuration
 
 ```yaml

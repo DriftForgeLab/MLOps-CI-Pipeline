@@ -27,7 +27,15 @@ _OPTIONAL_MODEL_KEYS: frozenset[str] = frozenset({"architecture"})
 RF_HYPERPARAMS_KEYS: frozenset[str] = {"n_estimators", "max_depth", "min_samples_split", "class_weight"}
 LR_HYPERPARAMS_KEYS: frozenset[str] = {"C", "solver", "max_iter", "class_weight"}
 CNN_HYPERPARAMS_KEYS: frozenset[str] = {"epochs", "batch_size", "learning_rate"}
-CNN_FINE_TUNE_KEYS: frozenset[str] = {"enabled", "epochs", "learning_rate", "freeze_backbone"}
+CNN_FINE_TUNE_KEYS: frozenset[str] = {
+    "enabled",
+    "epochs",
+    "learning_rate",
+    "freeze_backbone",
+    "oversample_drift_ratio",
+    "use_drift_val_for_best_epoch",
+    "drift_val_ratio",
+}
 CNN_ARCHITECTURE_KEYS: frozenset[str] = {"conv_layers", "fc_units", "dropout"}
 CNN_CONV_LAYER_KEYS: frozenset[str] = {"out_channels", "kernel_size"}
 
@@ -59,7 +67,16 @@ _PREPROCESSING_TOP_LEVEL_KEYS: set[str] = {
     "image",
 }
 _IMAGE_KEYS: set[str] = {"target_size", "color_mode", "normalize", "flatten", "augmentation", "raw_input", "isp"}
-_IMAGE_AUGMENTATION_KEYS: set[str] = {"enabled", "horizontal_flip", "rotation_degrees", "augmentation_factor"}
+_IMAGE_AUGMENTATION_KEYS: set[str] = {
+    "enabled",
+    "horizontal_flip",
+    "rotation_degrees",
+    "augmentation_factor",
+    "random_crop_padding",
+    "brightness_jitter",
+    "contrast_jitter",
+    "saturation_jitter",
+}
 _ISP_KEYS: set[str] = {"black_level_correction", "demosaicing", "white_balance", "color_correction", "denoising", "sharpening", "gamma_correction", "gpu_accelerated"}
 _ISP_BLACK_LEVEL_KEYS: set[str] = {"enabled", "black_level"}
 _ISP_DEMOSAICING_KEYS: set[str] = {"algorithm"}
@@ -172,11 +189,37 @@ class FineTuneConfig:
         learning_rate:   Lower LR than full training to avoid overwriting learned features.
         freeze_backbone: If True, only the final FC classifier head is trained;
                          convolutional layers are frozen.
+        oversample_drift_ratio:
+                         Target fraction of drifted samples in each fine-tune batch
+                         (0.0–1.0). Requires the training NPZ to carry an
+                         ``is_drifted`` mask (written by the preprocessing step
+                         when filenames contain a ``_drifted`` suffix). When
+                         set, a ``WeightedRandomSampler`` is used so the
+                         drifted minority is oversampled even if it makes up
+                         only a few percent of the dataset on disk.  None
+                         disables oversampling (uniform shuffling — current
+                         behaviour).
+        use_drift_val_for_best_epoch:
+                         If True and drifted samples are present in the
+                         training set, a stratified slice of those drifted
+                         samples is held out as a ``drift_val`` set, excluded
+                         from the training loader, and used to score
+                         best-epoch selection during fine-tuning. Without
+                         this flag, the standard val split is used (which is
+                         dominated by clean samples and a poor proxy for
+                         drift performance).
+        drift_val_ratio:
+                         Fraction of drifted training samples to carve out as
+                         drift_val when ``use_drift_val_for_best_epoch`` is
+                         True. Default 0.15.
     """
     enabled: bool = False
     epochs: int = 5
     learning_rate: float = 0.0001
     freeze_backbone: bool = False
+    oversample_drift_ratio: float | None = None
+    use_drift_val_for_best_epoch: bool = False
+    drift_val_ratio: float = 0.15
 
 @dataclass(frozen=True)
 class ModelConfig:
@@ -218,6 +261,15 @@ class ImageAugmentationConfig:
     horizontal_flip: bool = False
     rotation_degrees: int = 0
     augmentation_factor: int = 1  # number of augmented copies per original
+    # Random pad-and-crop: pad each side by N pixels then crop a random target_size
+    # window. 0 disables. Standard CIFAR recipe uses 4.
+    random_crop_padding: int = 0
+    # Photometric jitters applied per image. Each value V means a multiplicative
+    # factor sampled uniformly from [max(0, 1 - V), 1 + V]. 0.0 disables.
+    # Saturation jitter is ignored for grayscale images.
+    brightness_jitter: float = 0.0
+    contrast_jitter: float = 0.0
+    saturation_jitter: float = 0.0
 
 # ---------------------------------------------------------------------------
 # ISP pipeline config dataclasses

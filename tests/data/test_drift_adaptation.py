@@ -17,13 +17,17 @@ from src.data.drift_adaptation import (
     _load_holdout_image_standard,
     copy_training_images_to_dataset,
     evaluate_on_holdout_dir,
+    latest_drift_attempt,
+    list_drift_attempts,
     load_baseline_metrics,
     load_class_to_index,
+    rollback_drift_attempt,
     safe_copy_with_suffix,
     save_baseline_metrics,
     save_holdout_images,
     scan_labeled_drifted_dir,
     split_holdout_stratified,
+    write_drift_attempt_manifest,
 )
 
 
@@ -521,3 +525,172 @@ class TestLoadClassToIndex:
     def test_raises_when_file_missing(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             load_class_to_index(tmp_path, "dataset", "versionhash")
+
+
+# ---------------------------------------------------------------------------
+# Drift-attempt manifest + rollback (Tier-1 cleanup)
+# ---------------------------------------------------------------------------
+
+class TestDriftAttemptManifest:
+    """Cover write/list/rollback for the drift-attempt manifest workflow."""
+
+    def _seed_attempt(self, tmp_path: Path) -> tuple[Path, Path, Path, dict]:
+        """Set up a raw_dataset_dir with two drifted images already copied in.
+
+        Returns ``(raw_dataset_dir, raw_images_dir, holdout_dir, copied)``
+        suitable for passing to ``write_drift_attempt_manifest``.
+        """
+        raw_dataset_dir = tmp_path / "raw" / "dummy"
+        raw_images_dir = raw_dataset_dir / "images"
+        holdout_dir = tmp_path / "evaluation" / "drifted_holdout" / "dummy"
+
+        cats_dir = raw_images_dir / "cats"
+        dogs_dir = raw_images_dir / "dogs"
+        cats_dir.mkdir(parents=True)
+        dogs_dir.mkdir(parents=True)
+
+        cat_img = cats_dir / "cat_001_drifted.png"
+        dog_img = dogs_dir / "dog_001_drifted.png"
+        _make_image(cat_img)
+        _make_image(dog_img)
+
+        copied = {"cats": [cat_img], "dogs": [dog_img]}
+        return raw_dataset_dir, raw_images_dir, holdout_dir, copied
+
+    def test_write_creates_manifest_with_required_fields(self, tmp_path):
+        raw, raw_images, holdout, copied = self._seed_attempt(tmp_path)
+
+        manifest_path = write_drift_attempt_manifest(
+            raw_dataset_dir=raw,
+            drifted_dir=tmp_path / "drift_src",
+            raw_images_dir=raw_images,
+            holdout_dir=holdout,
+            copied=copied,
+            baseline_metrics={"accuracy": 0.5, "f1_score": 0.5,
+                              "precision": 0.5, "recall": 0.5, "n_samples": 1},
+            holdout_ratio=0.3,
+            random_seed=42,
+        )
+
+        assert manifest_path.exists()
+        payload = json.loads(manifest_path.read_text())
+        assert payload["n_files_added"] == 2
+        assert set(payload["files_by_class"]) == {"cats", "dogs"}
+        assert payload["files_by_class"]["cats"] == ["cats/cat_001_drifted.png"]
+        assert payload["holdout_ratio"] == 0.3
+        assert payload["random_seed"] == 42
+        assert payload["baseline_metrics"]["accuracy"] == 0.5
+
+    def test_list_returns_attempts_oldest_first(self, tmp_path):
+        raw, raw_images, holdout, copied = self._seed_attempt(tmp_path)
+
+        first = write_drift_attempt_manifest(
+            raw_dataset_dir=raw, drifted_dir=tmp_path / "src1",
+            raw_images_dir=raw_images, holdout_dir=holdout, copied=copied,
+            baseline_metrics=None, holdout_ratio=0.2, random_seed=1,
+        )
+        # Force a distinct timestamp by renaming
+        renamed_first = first.with_name("20200101_000000.json")
+        first.rename(renamed_first)
+
+        second = write_drift_attempt_manifest(
+            raw_dataset_dir=raw, drifted_dir=tmp_path / "src2",
+            raw_images_dir=raw_images, holdout_dir=holdout, copied=copied,
+            baseline_metrics=None, holdout_ratio=0.5, random_seed=2,
+        )
+
+        attempts = list_drift_attempts(raw)
+        assert len(attempts) == 2
+        # Sorted by filename → oldest first
+        assert attempts[0]["random_seed"] == 1
+        assert attempts[1]["random_seed"] == 2
+        # latest_drift_attempt picks the newest one
+        latest = latest_drift_attempt(raw)
+        assert latest is not None
+        assert latest["random_seed"] == 2
+        assert Path(latest["manifest_path"]) == second
+
+    def test_list_empty_when_no_attempts_dir(self, tmp_path):
+        raw = tmp_path / "raw" / "dummy"
+        raw.mkdir(parents=True)
+        assert list_drift_attempts(raw) == []
+        assert latest_drift_attempt(raw) is None
+
+    def test_rollback_removes_recorded_files_and_manifest(self, tmp_path):
+        raw, raw_images, holdout, copied = self._seed_attempt(tmp_path)
+        # An unrelated file that must NOT be touched
+        unrelated = raw_images / "cats" / "cat_clean.png"
+        _make_image(unrelated)
+
+        manifest_path = write_drift_attempt_manifest(
+            raw_dataset_dir=raw, drifted_dir=tmp_path / "src",
+            raw_images_dir=raw_images, holdout_dir=holdout, copied=copied,
+            baseline_metrics=None, holdout_ratio=0.2, random_seed=42,
+        )
+
+        result = rollback_drift_attempt(manifest_path)
+
+        assert result["removed"] == 2
+        assert result["missing"] == 0
+        assert not manifest_path.exists()
+        # Drifted images gone
+        assert not (raw_images / "cats" / "cat_001_drifted.png").exists()
+        assert not (raw_images / "dogs" / "dog_001_drifted.png").exists()
+        # Unrelated file untouched
+        assert unrelated.exists()
+
+    def test_rollback_counts_already_missing_files(self, tmp_path):
+        raw, raw_images, holdout, copied = self._seed_attempt(tmp_path)
+
+        manifest_path = write_drift_attempt_manifest(
+            raw_dataset_dir=raw, drifted_dir=tmp_path / "src",
+            raw_images_dir=raw_images, holdout_dir=holdout, copied=copied,
+            baseline_metrics=None, holdout_ratio=0.2, random_seed=42,
+        )
+        # Pre-delete one of the recorded files
+        (raw_images / "cats" / "cat_001_drifted.png").unlink()
+
+        result = rollback_drift_attempt(manifest_path)
+        assert result["removed"] == 1
+        assert result["missing"] == 1
+
+    def test_rollback_optionally_removes_holdout(self, tmp_path):
+        raw, raw_images, holdout, copied = self._seed_attempt(tmp_path)
+        holdout.mkdir(parents=True)
+        (holdout / "marker.txt").write_text("present")
+
+        manifest_path = write_drift_attempt_manifest(
+            raw_dataset_dir=raw, drifted_dir=tmp_path / "src",
+            raw_images_dir=raw_images, holdout_dir=holdout, copied=copied,
+            baseline_metrics=None, holdout_ratio=0.2, random_seed=42,
+        )
+
+        result = rollback_drift_attempt(manifest_path, remove_holdout=True)
+        assert result["holdout_removed"] is True
+        assert not holdout.exists()
+
+    def test_rollback_raises_on_missing_manifest(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            rollback_drift_attempt(tmp_path / "does_not_exist.json")
+
+    def test_rollback_refuses_paths_outside_raw_images_dir(self, tmp_path):
+        raw, raw_images, holdout, _copied = self._seed_attempt(tmp_path)
+        # Hand-craft a manifest that tries to escape via a relative-path traversal
+        attempts_dir = raw / ".drift_attempts"
+        attempts_dir.mkdir(parents=True)
+        manifest_path = attempts_dir / "20200101_000000.json"
+        outside = tmp_path / "outside.png"
+        _make_image(outside)
+        manifest_path.write_text(json.dumps({
+            "attempt_id": "20200101_000000",
+            "raw_images_dir": str(raw_images.resolve()),
+            "files_by_class": {"cats": ["../../../outside.png"]},
+            "holdout_dir": str(holdout),
+            "n_files_added": 1,
+        }))
+
+        result = rollback_drift_attempt(manifest_path)
+        # Refused: file outside raw_images_dir was not deleted
+        assert outside.exists()
+        # Manifest still removed and traversal counted as neither removed nor missing
+        assert result["removed"] == 0

@@ -165,6 +165,7 @@ def main() -> None:
         save_baseline_metrics,
         load_baseline_metrics,
         save_normalization_stats,
+        write_drift_attempt_manifest,
     )
 
     processed_dir = Path(config.data.processed)
@@ -292,8 +293,21 @@ def main() -> None:
             sys.exit(1)
 
     # --- Copy training images into the raw dataset ---
-    raw_images_dir = Path(config.data.raw) / dataset_name / "images"
-    copy_training_images_to_dataset(train_images, raw_images_dir)
+    raw_dataset_dir = Path(config.data.raw) / dataset_name
+    raw_images_dir = raw_dataset_dir / "images"
+    copied = copy_training_images_to_dataset(train_images, raw_images_dir)
+
+    # --- Record this attempt so it can be rolled back cleanly later ---
+    manifest_path = write_drift_attempt_manifest(
+        raw_dataset_dir=raw_dataset_dir,
+        drifted_dir=drifted_dir,
+        raw_images_dir=raw_images_dir,
+        holdout_dir=holdout_dir,
+        copied=copied,
+        baseline_metrics=baseline_metrics,
+        holdout_ratio=holdout_ratio,
+        random_seed=config.random_seed,
+    )
 
     # --- Print summary ---
     _print_summary(
@@ -307,6 +321,7 @@ def main() -> None:
         holdout_images=holdout_images,
         baseline_metrics=baseline_metrics,
         config_path=args.config,
+        manifest_path=manifest_path,
     )
 
 
@@ -321,6 +336,7 @@ def _print_summary(
     holdout_images: dict,
     baseline_metrics: dict | None,
     config_path: str,
+    manifest_path: Path,
 ) -> None:
     print()
     print("=" * 62)
@@ -354,6 +370,10 @@ def _print_summary(
     print()
     print("  The pipeline will automatically evaluate the fine-tuned model")
     print("  on the holdout and print a before/after comparison at the end.")
+    print()
+    print("  Rollback this attempt (e.g. if the fine-tune is rejected):")
+    print(f"    rollback-drift-training --config {config_path} --latest")
+    print(f"    Manifest: {manifest_path}")
     print()
     print("=" * 62)
 

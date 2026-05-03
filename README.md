@@ -43,6 +43,9 @@ run-pipeline --config src/config/pipeline_tabular.yaml
 # Image classification — CNN with PyTorch (JPG/PNG)
 run-pipeline --config src/config/pipeline_image.yaml
 
+# CIFAR-10 imported into ImageFolder PNG layout
+run-pipeline --config src/config/pipeline_cifar10.yaml
+
 # Raw DNG images through ISP pipeline → CNN
 run-pipeline --config src/config/pipeline_raw_image.yaml
 ```
@@ -245,3 +248,13 @@ data/processed/<dataset>/<version_id>/preprocessed/  train.npz  val.npz  test.np
 ## Adding datasets
 
 See `data/raw/README.md` for instructions on how to add new datasets.
+
+## CIFAR-10 quick start
+
+```bash
+python scripts/import_cifar10.py
+run-pipeline --config src/config/pipeline_cifar10.yaml
+```
+
+The importer downloads CIFAR-10 via `torchvision`, converts it to
+`data/raw/cifar10/images/<class>/*.png`, and writes `data/raw/cifar10/dataset.yaml`.

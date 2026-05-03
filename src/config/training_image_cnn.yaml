@@ -9,10 +9,12 @@ model:
         kernel_size: 3        # 3x3 convolution window
       - out_channels: 64      # number of filters in second conv layer
         kernel_size: 3
-    fc_units: 128             # units in the fully connected layer
+      - out_channels: 128     # number of filters in third conv layer
+        kernel_size: 3
+    fc_units: 256             # units in the fully connected layer
     dropout: 0.3              # dropout rate for regularization (0.0–1.0)
   hyperparameters:
-    epochs: 10                # number of full passes over the training set
+    epochs: 30                # number of full passes over the training set
     batch_size: 32            # images per gradient update
     learning_rate: 0.001      # Adam optimizer learning rate
 
@@ -23,6 +25,21 @@ model:
 # data distribution without discarding previously learned features.
 fine_tune:
   enabled: false              # overridden at runtime by --fine-tune flag
-  epochs: 5                   # fewer epochs than full training
+  epochs: 20                  # fewer epochs than full training
   learning_rate: 0.0001       # lower LR to avoid overwriting learned features
   freeze_backbone: false      # if true, only the classifier head is trained
+  # Drift-adaptive fine-tuning. These take effect only when --fine-tune is
+  # active AND the training NPZ carries an `is_drifted` mask (preprocessing
+  # writes it when filenames contain the `_drifted` suffix from
+  # `prepare-drift-training`). They are no-ops on a clean dataset.
+  #
+  # oversample_drift_ratio: target fraction of drifted samples per batch
+  # (e.g. 0.4 = ~40% drifted per batch via WeightedRandomSampler). Without
+  # this, drifted images can be 4% of the dataset and get drowned out.
+  # Set to null to disable.
+  oversample_drift_ratio: 0.4
+  # Use a held-out slice of drifted training samples as the val criterion
+  # for best-epoch selection — the standard val split is dominated by clean
+  # data and is a poor proxy for drift performance.
+  use_drift_val_for_best_epoch: true
+  drift_val_ratio: 0.15       # fraction of drifted samples held out
