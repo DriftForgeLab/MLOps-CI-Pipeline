@@ -24,4 +24,7 @@ data/raw/drone_raw/
 data/evaluation/drifted_holdout/**
 build/
 data/raw/fivek/
+
+# Local experiment results and figures
+poster_results/
 data/raw/cifar10/

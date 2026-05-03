@@ -2,9 +2,9 @@
 src/registry/rollback.py — Rollback production model to a previous registry version.
 
 CLI usage:
-    rollback-model --config src/config/pipeline_tabular.yaml
-    rollback-model --config src/config/pipeline_tabular.yaml --version 2
-    rollback-model --config src/config/pipeline_tabular.yaml --version 2 --reason "accuracy regression" --yes
+    rollback-model --config src/config/pipeline_tabular_classification.yaml
+    rollback-model --config src/config/pipeline_tabular_classification.yaml --version 2
+    rollback-model --config src/config/pipeline_tabular_classification.yaml --version 2 --reason "accuracy regression" --yes
 """
 
 import argparse
@@ -48,7 +48,7 @@ def _parse_args() -> argparse.Namespace:
         "--config",
         type=str,
         required=True,
-        help="Path to pipeline config file (e.g., src/config/pipeline_tabular.yaml).",
+        help="Path to pipeline config file (e.g., src/config/pipeline_tabular_classification.yaml).",
     )
     parser.add_argument(
         "--version",

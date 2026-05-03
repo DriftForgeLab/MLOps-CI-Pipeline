@@ -139,7 +139,7 @@ monitor-drift \
   --model-name iris_rf \
   --dataset-name iris \
   --dataset-version <version-hash> \
-  --config src/config/pipeline_tabular.yaml
+  --config src/config/pipeline_tabular_classification.yaml
 ```
 
 ### Options
@@ -179,7 +179,7 @@ ISP scenarios generated at training time.
 monitor-drift-image \
   --batch-dir data/new_batch_images/ \
   --model-name iris_image_cnn \
-  --config src/config/pipeline_image.yaml \
+  --config src/config/pipeline_image_cnn.yaml \
   --method statistical \
   --drift-scenarios-dir data/drift_scenarios/
 ```
@@ -290,7 +290,7 @@ do not have reusable weights. Only CNN pipelines benefit.
 # 1. Add or update images in data/raw/<dataset>/images/ to include new data
 
 # 2. Run the pipeline with --fine-tune
-run-pipeline --config src/config/pipeline_image.yaml --fine-tune
+run-pipeline --config src/config/pipeline_image_cnn.yaml --fine-tune
 
 # 3. The pipeline will:
 #    - Preprocess the updated dataset

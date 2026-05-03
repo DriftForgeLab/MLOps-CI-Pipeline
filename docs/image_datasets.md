@@ -90,7 +90,7 @@ and applied to all splits (leak-proof).
 ## Pipeline Configuration
 
 ```yaml
-# src/config/pipeline_image.yaml
+# src/config/pipeline_image_cnn.yaml
 task_type: "image_classification_cnn"
 dataset: sample_images    # change to your dataset name under data/raw/
 configs:
@@ -99,7 +99,7 @@ configs:
   # ... other configs unchanged
 ```
 
-For raw DNG datasets, use `pipeline_raw_image.yaml` instead, which points to
+For raw DNG datasets, use `pipeline_image_raw.yaml` instead, which points to
 `preprocessing_raw_image.yaml`.
 
 ### CIFAR-10 quick start
@@ -155,10 +155,10 @@ model:
 
 ```bash
 # Standard JPG/PNG dataset
-run-pipeline --config src/config/pipeline_image.yaml
+run-pipeline --config src/config/pipeline_image_cnn.yaml
 
 # Raw DNG dataset (ISP pipeline)
-run-pipeline --config src/config/pipeline_raw_image.yaml
+run-pipeline --config src/config/pipeline_image_raw.yaml
 ```
 
 The pipeline executes: versioning → splitting → preprocessing → training →

@@ -18,7 +18,7 @@ CLASSIFICATION_TASK_TYPES: frozenset[str] = frozenset({"classification"}) | IMAG
 SKLEARN_TASK_TYPES: frozenset[str] = frozenset({"classification", "regression"})
 VALID_LOG_LEVELS: frozenset[str] = {"DEBUG", "INFO", "WARNING", "ERROR"}
 VALID_PIPELINE_STAGES: frozenset[str] = {"preprocessing", "training", "evaluation", "model_analysis", "deployment", "promotion"}
-VALID_ALGORITHMS: frozenset[str] = {"random_forest", "logistic_regression", "linear_regression", "cnn"}
+VALID_ALGORITHMS: frozenset[str] = {"random_forest", "logistic_regression", "linear_regression", "cnn", "gradient_boosting"}
 VALID_SOLVERS: frozenset[str] = {"lbfgs", "saga", "liblinear"}
 VALID_CLASS_WEIGHTS: frozenset[str] = {"balanced"} ## May need other weights later
 
@@ -163,6 +163,14 @@ class LinearRegressionHyperparams:
     pass
 
 @dataclass(frozen=True)
+class GradientBoostingHyperparams:
+    max_iter: int = 300
+    learning_rate: float = 0.05
+    max_depth: int | None = 7
+    min_samples_leaf: int = 20
+    l2_regularization: float = 0.1
+
+@dataclass(frozen=True)
 class CnnConvLayerConfig:
     out_channels: int
     kernel_size: int
@@ -224,7 +232,7 @@ class FineTuneConfig:
 @dataclass(frozen=True)
 class ModelConfig:
     algorithm: str
-    hyperparameters: RandomForestHyperparams | LogisticRegressionHyperparams | LinearRegressionHyperparams | CnnHyperparams
+    hyperparameters: RandomForestHyperparams | LogisticRegressionHyperparams | LinearRegressionHyperparams | GradientBoostingHyperparams | CnnHyperparams
     architecture: CnnArchitectureConfig | None = None
 
 @dataclass(frozen=True)

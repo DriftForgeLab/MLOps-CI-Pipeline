@@ -139,7 +139,7 @@ def _print_drift_eval_block(drift_eval: dict) -> None:
     after    = drift_eval.get("after_finetuning", {})
     delta    = drift_eval.get("delta", {})
     improved = drift_eval.get("improved", False)
-    n        = drift_eval.get("n_holdout_images", "?")
+    n        = drift_eval.get("n_holdout_samples", drift_eval.get("n_holdout_images", "?"))
 
     def _fmt(v) -> str:
         return f"{v:.4f}" if isinstance(v, float) else "N/A"
@@ -150,17 +150,18 @@ def _print_drift_eval_block(drift_eval: dict) -> None:
             return "N/A"
         return f"{'+'if v >= 0 else ''}{v:.4f}"
 
+    sample_label = "drifted images" if drift_eval.get("task_type", "").startswith("image") else "drifted samples"
     print("\n" + "-" * 60)
-    print(f"  DRIFT ADAPTATION  (holdout: {n} drifted images)")
+    print(f"  DRIFT ADAPTATION  (holdout: {n} {sample_label})")
     print("-" * 60)
+    # Show metrics present in the baseline dict — handles both classification and regression
+    clf_keys = [("accuracy","Accuracy"),("f1_score","F1 score"),("precision","Precision"),("recall","Recall")]
+    reg_keys = [("r2","R2"),("mae","MAE"),("rmse","RMSE")]
+    metric_pairs = reg_keys if "r2" in baseline else clf_keys
+
     print(f"\n  {'Metric':<12}  {'Before':>10}  {'After':>10}  {'Delta':>10}")
     print(f"  {'-'*12}  {'-'*10}  {'-'*10}  {'-'*10}")
-    for key, label in [
-        ("accuracy",  "Accuracy"),
-        ("f1_score",  "F1 score"),
-        ("precision", "Precision"),
-        ("recall",    "Recall"),
-    ]:
+    for key, label in metric_pairs:
         print(
             f"  {label:<12}  {_fmt(baseline.get(key)):>10}"
             f"  {_fmt(after.get(key)):>10}  {_fmt_delta(key):>10}"

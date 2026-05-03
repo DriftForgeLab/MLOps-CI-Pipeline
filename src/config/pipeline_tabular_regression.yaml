@@ -1,0 +1,52 @@
+# =============================================================================
+# src/config/pipeline_tabular_regression.yaml — Tabular regression pipeline config
+# =============================================================================
+# Runs the full MLOps pipeline on the California Housing dataset with a
+# Random Forest regressor.
+#
+# Usage:
+#   run-pipeline --config src/config/pipeline_tabular_regression.yaml
+#
+# Stages: preprocessing → training → evaluation → promotion
+# Metrics tracked in MLflow: eval.mae, eval.mse, eval.rmse, eval.r2
+# Promotion gates (promotion.yaml): R² >= 0.75 and MAE <= 0.55
+# =============================================================================
+
+project:
+  name: "lightweight-mlops-pipeline"
+  version: "0.1.0"
+
+task_type: "regression"
+
+random_seed: 42
+
+pipeline_stages:
+  - "preprocessing"
+  - "training"
+  - "evaluation"
+  - "promotion"
+
+output_dir: "outputs"
+
+dataset: california_housing
+
+data:
+  raw: "data/raw"
+  processed: "data/processed"
+  evaluation: "data/evaluation"
+  drift_scenarios: "data/drift_scenarios"
+
+configs:
+  preprocessing: "src/config/preprocessing_tabular.yaml"
+  training: "src/config/training_regression.yaml"
+  evaluation: "src/config/evaluation.yaml"
+  deployment: "src/config/deployment.yaml"
+  promotion: "src/config/promotion.yaml"
+  drift: "src/config/drift.yaml"
+
+log_level: "INFO"
+
+mlflow:
+  tracking_uri: null        # env var MLFLOW_TRACKING_URI used if null; null = local mlruns/
+  experiment_name: null     # defaults to project.name if null
+  registry_model_name: null # defaults to "{project.name}-{task_type}" if null

@@ -159,7 +159,7 @@ def prepare_image_batch(
     if img_config is None:
         raise ValueError(
             "Preprocessing config has no 'image' section. "
-            "Use an image pipeline config (pipeline_image.yaml or pipeline_raw_image.yaml)."
+            "Use an image pipeline config (pipeline_image_cnn.yaml or pipeline_image_raw.yaml)."
         )
 
     image_paths = _scan_images(input_dir, expected_formats)

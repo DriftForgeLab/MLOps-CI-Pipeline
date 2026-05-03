@@ -14,7 +14,7 @@ pipeline_stages:
 
 output_dir: "outputs"
 
-dataset: iris   # change to any tabular CSV dataset name under data/raw/
+dataset: breast_cancer   # change to any tabular CSV dataset name under data/raw/
 
 data:
   raw: "data/raw"

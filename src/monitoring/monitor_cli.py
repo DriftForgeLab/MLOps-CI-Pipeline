@@ -10,13 +10,13 @@ Minimal usage (auto-resolves dataset name and latest version from config):
     monitor-drift \\
         --batch-csv data/new_batch.csv \\
         --model-name iris_rf \\
-        --config src/config/pipeline_tabular.yaml
+        --config src/config/pipeline_tabular_classification.yaml
 
 Explicit dataset version:
     monitor-drift \\
         --batch-csv data/new_batch.csv \\
         --model-name iris_rf \\
-        --config src/config/pipeline_tabular.yaml \\
+        --config src/config/pipeline_tabular_classification.yaml \\
         --dataset-version abc123hash
 
 Output:
@@ -75,7 +75,7 @@ def _parse_args() -> argparse.Namespace:
         "--config",
         type=str,
         required=True,
-        help="Path to pipeline config YAML (e.g. src/config/pipeline_tabular.yaml).",
+        help="Path to pipeline config YAML (e.g. src/config/pipeline_tabular_classification.yaml).",
     )
     parser.add_argument(
         "--dataset-name",
@@ -242,6 +242,7 @@ def main() -> None:
             drift_result,
             is_image_isp=False,
             is_image_cnn=False,
+            is_tabular=True,
             drift_report_linked=output_path.name,
             config_path=args.config,
         )
