@@ -549,18 +549,24 @@ def _promotion_stage(config: PipelineConfig, version_id: str) -> None:
         reason_msg = f" Reason: {result.reason}" if result.reason else " No reason provided."
         raise ValueError(f"Promotion rejected by user.{reason_msg}")
 
-    # Register and promote the approved model in MLflow Model Registry
+    # Register and promote the approved model in MLflow Model Registry.
+    # Lineage tags are built (and validated) BEFORE any registry mutation so
+    # that a missing required tag aborts the promotion before a new version
+    # is registered and the previous Production is archived.
     from src.registry.model_registry import (
         register_approved_model,
         promote_to_production,
-        attach_lineage_tags,
+        build_lineage_tags,
+        write_lineage_tags,
         get_mlflow_client,
     )
-    model_version = register_approved_model(config, mlflow_run_id)
-    promote_to_production(config, model_version.version, mlflow_run_id)
     client = get_mlflow_client(config)
     run = client.get_run(mlflow_run_id)
-    attach_lineage_tags(config, model_version.version, run, report, decision)
+    tags = build_lineage_tags(config, run, report, decision)
+
+    model_version = register_approved_model(config, mlflow_run_id)
+    promote_to_production(config, model_version.version, mlflow_run_id)
+    write_lineage_tags(config, model_version.version, tags)
 
 
 def run_drift_adaptation_eval(

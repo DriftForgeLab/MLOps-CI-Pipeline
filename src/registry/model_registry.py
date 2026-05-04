@@ -146,8 +146,12 @@ def promote_to_production(
     _logger.info("Model '%s' version %s is now Production", model_name, version_str)
 
 
-def _build_lineage_tags(config: PipelineConfig, run: Run, report: dict, decision: dict) -> dict[str, str]:
-    """Assemble all lineage tags for a registered model version.
+def build_lineage_tags(config: PipelineConfig, run: Run, report: dict, decision: dict) -> dict[str, str]:
+    """Assemble and validate all lineage tags for a registered model version.
+
+    This is the audit-trail gate: callers should invoke this *before* any
+    registry mutation so that a missing tag aborts the promotion before a
+    new version is registered and the previous Production is archived.
 
     Raises:
         ValueError: If task_type is unsupported, or if any required lineage tag
@@ -209,14 +213,12 @@ def _build_lineage_tags(config: PipelineConfig, run: Run, report: dict, decision
     return {k: v for k, v in tags.items() if v}  # drop remaining optional empty strings
 
 
-def attach_lineage_tags(
+def write_lineage_tags(
     config: PipelineConfig,
     version_number: int | str,
-    run: Run,
-    report: dict,
-    decision: dict,
+    tags: dict[str, str],
 ) -> None:
-    """Attach lineage tags to a registered model version.
+    """Write a pre-built, pre-validated set of lineage tags to a model version.
 
     Tags are written one at a time (MLflow API limitation). If the write loop is
     interrupted, the error is logged with full details of which tags were and were
@@ -225,7 +227,6 @@ def attach_lineage_tags(
     client = get_mlflow_client(config)
     model_name = resolve_model_name(config)
     version_str = str(version_number)
-    tags = _build_lineage_tags(config, run, report, decision)
     written: list[str] = []
     try:
         for key, value in tags.items():
@@ -242,6 +243,24 @@ def attach_lineage_tags(
         "Attached %d lineage tags to model '%s' version %s",
         len(tags), model_name, version_str,
     )
+
+
+def attach_lineage_tags(
+    config: PipelineConfig,
+    version_number: int | str,
+    run: Run,
+    report: dict,
+    decision: dict,
+) -> None:
+    """Build, validate, and write lineage tags in one call.
+
+    Convenience wrapper for callers that already hold a registered model version
+    and want the build+write in a single step. The promotion stage instead calls
+    build_lineage_tags before registration to protect audit-trail integrity, and
+    write_lineage_tags afterwards.
+    """
+    tags = build_lineage_tags(config, run, report, decision)
+    write_lineage_tags(config, version_number, tags)
 
 
 def get_production_model_metrics(config: PipelineConfig) -> dict | None:

@@ -165,7 +165,8 @@ class TestPromotionStage:
             mock_mlflow.active_run.return_value = MagicMock(info=MagicMock(run_id="run1"))
             with patch("src.registry.model_registry.register_approved_model") as mock_reg, \
                  patch("src.registry.model_registry.promote_to_production"), \
-                 patch("src.registry.model_registry.attach_lineage_tags"), \
+                 patch("src.registry.model_registry.build_lineage_tags", return_value={}), \
+                 patch("src.registry.model_registry.write_lineage_tags"), \
                  patch("src.registry.model_registry.get_mlflow_client") as mock_client:
                 mock_reg.return_value = MagicMock(version="1")
                 mock_client.return_value.get_run.return_value = MagicMock()
@@ -217,7 +218,8 @@ class TestPromotionStage:
             mock_mlflow.active_run.return_value = MagicMock(info=MagicMock(run_id="run1"))
             with patch("src.registry.model_registry.register_approved_model") as mock_reg, \
                  patch("src.registry.model_registry.promote_to_production"), \
-                 patch("src.registry.model_registry.attach_lineage_tags"), \
+                 patch("src.registry.model_registry.build_lineage_tags", return_value={}), \
+                 patch("src.registry.model_registry.write_lineage_tags"), \
                  patch("src.registry.model_registry.get_mlflow_client") as mock_client:
                 mock_reg.return_value = MagicMock(version="1")
                 mock_client.return_value.get_run.return_value = MagicMock()

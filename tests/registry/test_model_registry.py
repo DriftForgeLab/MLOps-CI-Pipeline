@@ -13,7 +13,7 @@ from src.registry.model_registry import (
     is_run_already_registered,
     register_approved_model,
     promote_to_production,
-    _build_lineage_tags,
+    build_lineage_tags,
     attach_lineage_tags,
     get_production_model_metrics,
 )
@@ -117,11 +117,11 @@ def test_resolve_model_name_regression(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Unit tests — _build_lineage_tags
+# Unit tests — build_lineage_tags
 # ---------------------------------------------------------------------------
 
 def _make_fake_run(the_run_id: str, task_type: str = "classification"):
-    """Create a minimal fake run object for unit-testing _build_lineage_tags."""
+    """Create a minimal fake run object for unit-testing build_lineage_tags."""
     class FakeRunData:
         tags = {
             "pipeline.execution_id": "exec-001",
@@ -154,14 +154,14 @@ def _make_fake_run(the_run_id: str, task_type: str = "classification"):
     return fake_run
 
 
-def test_build_lineage_tags_classification_keys(tmp_path):
+def testbuild_lineage_tags_classification_keys(tmp_path):
     cfg_path = _write_config(tmp_path)
     config = load_config(cfg_path)
     run = _make_fake_run("test-run-id")
     report = {"comparison": {"overall_verdict": "no_baseline"}}
     decision = {"outcome": "approved"}
 
-    tags = _build_lineage_tags(config, run, report, decision)
+    tags = build_lineage_tags(config, run, report, decision)
 
     # Required identity tags
     assert tags["lineage.run_id"] == "test-run-id"
@@ -183,7 +183,7 @@ def test_build_lineage_tags_classification_keys(tmp_path):
     assert "lineage.eval.mae" not in tags
 
 
-def test_build_lineage_tags_regression_keys(tmp_path):
+def testbuild_lineage_tags_regression_keys(tmp_path):
     cfg_path = _write_config(tmp_path, task_type="regression")
     config = load_config(cfg_path)
 
@@ -197,7 +197,7 @@ def test_build_lineage_tags_regression_keys(tmp_path):
         data = FakeRunData()
         info = FakeRunInfo()
 
-    tags = _build_lineage_tags(config, FakeRun(), {}, {"outcome": "approved"})
+    tags = build_lineage_tags(config, FakeRun(), {}, {"outcome": "approved"})
 
     assert "lineage.eval.r2" in tags
     assert "lineage.eval.mae" in tags
@@ -206,7 +206,7 @@ def test_build_lineage_tags_regression_keys(tmp_path):
     assert "lineage.eval.f1_score" not in tags
 
 
-def test_build_lineage_tags_raises_when_required_tags_missing(tmp_path):
+def testbuild_lineage_tags_raises_when_required_tags_missing(tmp_path):
     """Missing required lineage tags must raise ValueError — not silently emit a warning."""
     cfg_path = _write_config(tmp_path)
     config = load_config(cfg_path)
@@ -222,10 +222,10 @@ def test_build_lineage_tags_raises_when_required_tags_missing(tmp_path):
         info = FakeRunInfo()
 
     with pytest.raises(ValueError, match="required tags are missing or empty"):
-        _build_lineage_tags(config, FakeRun(), {}, {})
+        build_lineage_tags(config, FakeRun(), {}, {})
 
 
-def test_build_lineage_tags_excludes_averaging(tmp_path):
+def testbuild_lineage_tags_excludes_averaging(tmp_path):
     """Ensure the 'averaging' non-numeric metric is never included."""
     cfg_path = _write_config(tmp_path)
     config = load_config(cfg_path)
@@ -241,11 +241,11 @@ def test_build_lineage_tags_excludes_averaging(tmp_path):
         data = FakeRunData()
         info = FakeRunInfo()
 
-    tags = _build_lineage_tags(config, FakeRun(), {}, {"outcome": "approved"})
+    tags = build_lineage_tags(config, FakeRun(), {}, {"outcome": "approved"})
     assert "lineage.eval.averaging" not in tags
 
 
-def test_build_lineage_tags_raises_on_unknown_task_type(tmp_path):
+def testbuild_lineage_tags_raises_on_unknown_task_type(tmp_path):
     """An unsupported task_type must raise ValueError — not silently use regression keys."""
     cfg_path = _write_config(tmp_path, task_type="classification")
     config = load_config(cfg_path)
@@ -256,7 +256,7 @@ def test_build_lineage_tags_raises_on_unknown_task_type(tmp_path):
 
     run = _make_fake_run("run-unknown-task")
     with pytest.raises(ValueError, match="Unsupported task_type"):
-        _build_lineage_tags(bad_config, run, {}, {"outcome": "approved"})
+        build_lineage_tags(bad_config, run, {}, {"outcome": "approved"})
 
 
 # ---------------------------------------------------------------------------
