@@ -23,7 +23,7 @@ jobs:
         run: pytest tests/ -v --tb=short
 
       - name: Run pipeline
-        run: run-pipeline --config src/config/pipeline_tabular.yaml
+        run: run-pipeline --config src/config/pipeline_tabular_classification.yaml
 
       - name: Print run report
         run: cat outputs/run_report.json
