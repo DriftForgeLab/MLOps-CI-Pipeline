@@ -9,12 +9,13 @@
 #
 # Decision options
 # ----------------
-# retrain       Trigger model retraining with updated/additional data.
-# collect_data  Flag the batch for additional data collection before acting.
-# adjust_isp    Adjust ISP parameters and re-preprocess (raw-image pipelines).
+# retrain       Tabular: merge drifted batch into training set and retrain from scratch.
+#               Image CNN: retrain from scratch on original data only (alternative to fine tune).
+# fine tune     Image CNN only: continue training from production weights on drifted images.
+# collect data  Flag the batch for manual review — no automated action taken.
+# adjust isp    Adjust ISP parameters and re-preprocess (raw-image pipelines).
 #               Only offered when is_image_isp=True.
 # accept        Accept drift — continue with the current model as-is.
-# escalate      Escalate to a senior reviewer or incident-response track.
 #
 # Output dict (returned by DriftDecision.to_dict())
 # -------------------------------------------------
@@ -79,19 +80,18 @@ def should_trip_ci_gate(
 # ---------------------------------------------------------------------------
 
 DRIFT_DECISION_OPTIONS: dict[str, str] = {
-    "fine_tune":      "Log decision to fine-tune — adapt model weights to the new distribution (requires labeled drifted images)",
-    "retrain_merged": "Log decision to retrain on merged data — append drifted batch to training set and retrain from scratch",
-    "retrain":        "Log decision to retrain — train a new model from scratch on the original data only",
-    "collect_data":   "Log decision to collect more data — batch is flagged for manual review",
-    "adjust_isp":     "Log decision to adjust ISP — re-run preprocessing manually (raw-image pipelines)",
-    "accept":         "Log decision to accept drift — continue with current model as-is",
+    "fine tune":      "Fine-tune — continue training from production weights on labeled drifted images",
+    "retrain":        "Retrain — merge drifted batch into training set and retrain from scratch",
+    "collect data":   "Collect data — flag batch for manual review (no automated action)",
+    "adjust isp":     "Adjust ISP — re-run preprocessing with corrected ISP parameters (raw-image pipelines)",
+    "accept":         "Accept drift — continue with current model as-is",
 }
 
 # Ordered follow-up steps shown in the menu for each actionable option.
 # Use {config} as a placeholder for the pipeline config path.
 # Multi-step options (like fine_tune) show each step on its own line.
 _OPTION_STEPS_IMAGE: dict[str, list[str]] = {
-    "fine_tune": [
+    "fine tune": [
         "prepare-drift-training --drifted-dir data/batches/images/drifted --config {config}",
         "run-pipeline --config {config} --fine-tune",
     ],
@@ -101,11 +101,8 @@ _OPTION_STEPS_IMAGE: dict[str, list[str]] = {
 }
 
 _OPTION_STEPS_TABULAR: dict[str, list[str]] = {
-    "retrain_merged": [
-        "prepare-drift-training-tabular --drifted-csv data/batches/tabular/drifted.csv --config {config}",
-        "run-pipeline --config {config}",
-    ],
     "retrain": [
+        "prepare-drift-training-tabular --drifted-csv data/batches/tabular/drifted.csv --config {config}",
         "run-pipeline --config {config}",
     ],
 }
@@ -186,20 +183,18 @@ def request_drift_decision(
     Returns:
         DriftDecision if the user made a valid choice, else None.
     """
-    _print_drift_summary(drift_result, is_image_isp=is_image_isp)
-
     option_steps = _OPTION_STEPS_TABULAR if is_tabular else _OPTION_STEPS_IMAGE
 
-    # Build the menu — fine_tune for CNN image or tabular pipelines,
-    #                  adjust_isp only for raw-ISP image drift
+    # Build the menu:
+    #   "fine tune"   — image CNN only
+    #   "adjust isp"  — raw-ISP image only
+    #   "retrain"     — all pipeline types, but steps differ (tabular merges data first)
     menu: dict[str, tuple[str, str]] = {}
     idx = 1
     for key, label in DRIFT_DECISION_OPTIONS.items():
-        if key == "fine_tune" and not is_image_cnn:
+        if key == "fine tune" and not is_image_cnn:
             continue
-        if key == "retrain_merged" and not is_tabular:
-            continue
-        if key == "adjust_isp" and not is_image_isp:
+        if key == "adjust isp" and not is_image_isp:
             continue
         menu[str(idx)] = (key, label)
         idx += 1
@@ -215,9 +210,9 @@ def request_drift_decision(
             else:
                 for i, step in enumerate(steps, 1):
                     print(f"       {'':14}   Step {i}: {step.format(config=cfg)}")
-                if key == "fine_tune" and is_image_cnn:
+                if key == "fine tune" and is_image_cnn:
                     print(f"       {'':14}   (Run: prepare-drift-training --help  for setup details)")
-                elif key == "retrain_merged" and is_tabular:
+                elif key == "retrain" and is_tabular:
                     print(f"       {'':14}   (Run: prepare-drift-training-tabular --help  for setup details)")
     print("  [Q] Cancel        — Abort without logging a decision")
 
