@@ -4,6 +4,7 @@ import pytest
 
 from src.promotion.approval import (
     ApprovalResult,
+    ApprovalUnavailableError,
     request_approval,
     _print_summary,
     _print_drift_block,
@@ -143,6 +144,39 @@ class TestApprovalCancel:
         monkeypatch.setattr("builtins.input", lambda prompt: "xyz")
         result = request_approval(_minimal_report())
         assert result.approved is False
+
+    def test_keyboard_interrupt_at_decision_is_cancellation(self, monkeypatch):
+        def _raise(_prompt):
+            raise KeyboardInterrupt
+        monkeypatch.setattr("builtins.input", _raise)
+        result = request_approval(_minimal_report())
+        assert result.approved is False
+        assert result.reason is None
+
+
+# ── request_approval: unavailable path (no TTY / EOF) ──────────────────────
+
+class TestApprovalUnavailable:
+    """EOFError on the decision prompt must raise ApprovalUnavailableError.
+
+    This separates "couldn't ask the human" (environment constraint) from
+    "human chose to cancel" (Q / Ctrl+C). The two had been conflated and
+    both rendered as a generic ValueError caught as a 'failed' stage.
+    """
+
+    def test_eof_at_decision_raises_unavailable(self, monkeypatch):
+        def _raise(_prompt):
+            raise EOFError
+        monkeypatch.setattr("builtins.input", _raise)
+        with pytest.raises(ApprovalUnavailableError):
+            request_approval(_minimal_report())
+
+    def test_unavailable_message_mentions_stdin(self, monkeypatch):
+        def _raise(_prompt):
+            raise EOFError
+        monkeypatch.setattr("builtins.input", _raise)
+        with pytest.raises(ApprovalUnavailableError, match="stdin"):
+            request_approval(_minimal_report())
 
 
 # ── _print_summary: output content ─────────────────────────────────────────

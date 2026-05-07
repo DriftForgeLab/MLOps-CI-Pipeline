@@ -1,3 +1,22 @@
+# =============================================================================
+# CI Pipeline — scope-limited by design
+# =============================================================================
+# This workflow validates plumbing, not production deployments. It runs
+# preprocessing → training → evaluation against a CI-specific config that
+# omits the manual `promotion` stage, because the approval gate requires
+# an interactive TTY which GitHub Actions runners do not provide.
+#
+# As a consequence, models trained in CI are NOT promotable to Production
+# after the fact: the MLflow tracking store (mlruns/) and model artefacts
+# live on the ephemeral runner filesystem and are discarded when the job
+# ends, and no `ModelVersion` is registered without the promotion stage.
+#
+# Closing this gap would require a shared MLflow backend (S3 + RDS or
+# equivalent) and a `promote-from-run` CLI on top of it. Both fall outside
+# the bachelor-thesis scope — see §9.3 / future-work in
+# MLOPS_CI_PIPELINE_OVERVIEW.md for the rationale.
+# =============================================================================
+
 name: CI Pipeline
 
 on:
@@ -23,7 +42,7 @@ jobs:
         run: pytest tests/ -v --tb=short
 
       - name: Run pipeline
-        run: run-pipeline --config src/config/pipeline_tabular_classification.yaml
+        run: run-pipeline --config src/config/pipeline_tabular_classification_ci.yaml
 
       - name: Print run report
         run: cat outputs/run_report.json

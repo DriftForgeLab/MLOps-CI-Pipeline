@@ -98,6 +98,42 @@ class TestBuildRunReport:
         )
         assert report["overall_status"] == "failed"
 
+    def test_blocked_status_surfaces_as_blocked(self):
+        stages = [
+            _make_stage("training"),
+            _make_stage("promotion", status="blocked", error="rules failed"),
+        ]
+        report = build_run_report(
+            project_name="p", project_version="1",
+            config_hash="h", task_type="t", random_seed=1,
+            dataset_version_id="v", stage_results=stages,
+        )
+        assert report["overall_status"] == "blocked"
+
+    def test_cancelled_status_surfaces_as_cancelled(self):
+        stages = [
+            _make_stage("training"),
+            _make_stage("promotion", status="cancelled", error="no tty"),
+        ]
+        report = build_run_report(
+            project_name="p", project_version="1",
+            config_hash="h", task_type="t", random_seed=1,
+            dataset_version_id="v", stage_results=stages,
+        )
+        assert report["overall_status"] == "cancelled"
+
+    def test_failed_takes_precedence_over_cancelled_and_blocked(self):
+        stages = [
+            _make_stage("training", status="failed", error="boom"),
+            _make_stage("promotion", status="cancelled", error="no tty"),
+        ]
+        report = build_run_report(
+            project_name="p", project_version="1",
+            config_hash="h", task_type="t", random_seed=1,
+            dataset_version_id="v", stage_results=stages,
+        )
+        assert report["overall_status"] == "failed"
+
     def test_empty_stages_is_completed(self):
         report = build_run_report(
             project_name="p", project_version="1",

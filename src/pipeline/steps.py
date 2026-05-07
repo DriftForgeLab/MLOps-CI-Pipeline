@@ -39,7 +39,7 @@ from src.pipeline.mlflow_logger import (
 )
 
 from src.promotion.rules import run_promotion_rules
-from src.promotion.approval import request_approval
+from src.promotion.approval import request_approval, ApprovalUnavailableError
 from src.monitoring.history import DEFAULT_OUTPUTS_ROOT, load_latest_drift
 from src.registry.model_registry import PROMOTION_ARTIFACT_SUBDIR, resolve_model_name
 import json
@@ -54,11 +54,17 @@ class StageResult:
 
     Attributes:
         stage:            Name of the stage that was executed (ex. "training")
-        status:           Execution status ("completed", "failed", or "blocked")
+        status:           Execution status — one of:
+                            "completed" — stage finished successfully
+                            "failed"    — engineering breakage / unexpected exception
+                            "blocked"   — governance rejection (rules failed)
+                            "cancelled" — non-interactive environment could not
+                                          obtain a human decision at the approval gate
         started_at:       ISO 8601 timestamp when stage began
         ended_at:         ISO 8601 timestamp when stage ended
         duration_seconds: Wall-clock time elapsed during execution
-        error:            Exception message if status is "failed", else None
+        error:            Exception message if status is "failed", "blocked",
+                          or "cancelled"; else None
     """
     stage: str
     status: str
@@ -822,6 +828,10 @@ def execute_stage(
         status = "blocked"
         error = str(e)
         logger.warning("  %s", e)
+    except ApprovalUnavailableError as e:
+        status = "cancelled"
+        error = str(e)
+        logger.warning("  Stage '%s' cancelled: %s", stage_name, e)
     except Exception as e:
         status = "failed"
         error = str(e)

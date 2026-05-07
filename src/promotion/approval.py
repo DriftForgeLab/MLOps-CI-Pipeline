@@ -31,6 +31,19 @@ class ApprovalResult:
     reason: str | None = None
 
 
+class ApprovalUnavailableError(Exception):
+    """
+    Raised when no human decision could be obtained at the approval gate
+    because stdin is closed or not attached to a TTY (e.g. CI runners).
+
+    Distinct from an active user cancellation (Q / Ctrl+C): this signals
+    that the *environment* could not present the prompt to a human, not
+    that a human chose not to decide. Callers should treat it as a
+    structural outcome separate from `failed` (engineering breakage) and
+    `blocked` (governance rejection).
+    """
+
+
 def request_approval(
     report: dict,
     drift: dict | None = None,
@@ -54,6 +67,11 @@ def request_approval(
 
     Returns:
         ApprovalResult with approved=True, or approved=False with a reason.
+
+    Raises:
+        ApprovalUnavailableError: stdin returned EOF before any decision was
+            entered, indicating the gate ran in a non-interactive environment
+            (e.g. CI). Distinct from an active user cancellation.
     """
     _print_summary(report, drift=drift, drift_eval=drift_eval)
 
@@ -64,7 +82,12 @@ def request_approval(
 
     try:
         decision = input("\nYour decision [1/2/Q]: ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
+    except EOFError as exc:
+        raise ApprovalUnavailableError(
+            "Approval gate could not run: stdin returned EOF before a decision "
+            "was entered (typical of CI runners and other non-interactive shells)."
+        ) from exc
+    except KeyboardInterrupt:
         decision = "q"
 
     if decision == "1":

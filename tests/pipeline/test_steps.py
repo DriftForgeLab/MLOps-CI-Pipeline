@@ -83,6 +83,48 @@ class TestExecuteStageFailed:
             execute_stage("nonexistent", _dummy_config(), VERSION_ID)
 
 
+# ── execute_stage status mapping ────────────────────────────────────────────
+
+class TestExecuteStageStatusMapping:
+    """Verify each exception class maps to its dedicated stage status.
+
+    The trichotomy is: PromotionBlockedError → 'blocked', ApprovalUnavailableError
+    → 'cancelled', any other Exception → 'failed'. Conflating any of these
+    loses information in the run-report.
+    """
+
+    def test_promotion_blocked_maps_to_blocked(self):
+        from src.pipeline.steps import PromotionBlockedError
+
+        def stage(config, vid):
+            raise PromotionBlockedError("rules failed")
+
+        with patch.dict(_STAGE_REGISTRY, {"s": stage}):
+            result = execute_stage("s", _dummy_config(), VERSION_ID)
+        assert result.status == "blocked"
+        assert "rules failed" in result.error
+
+    def test_approval_unavailable_maps_to_cancelled(self):
+        from src.promotion.approval import ApprovalUnavailableError
+
+        def stage(config, vid):
+            raise ApprovalUnavailableError("no tty")
+
+        with patch.dict(_STAGE_REGISTRY, {"s": stage}):
+            result = execute_stage("s", _dummy_config(), VERSION_ID)
+        assert result.status == "cancelled"
+        assert "no tty" in result.error
+
+    def test_generic_exception_maps_to_failed(self):
+        def stage(config, vid):
+            raise ValueError("kaboom")
+
+        with patch.dict(_STAGE_REGISTRY, {"s": stage}):
+            result = execute_stage("s", _dummy_config(), VERSION_ID)
+        assert result.status == "failed"
+        assert "kaboom" in result.error
+
+
 # ── model_analysis stage registered ─────────────────────────────────────────
 
 class TestModelAnalysisStageRegistered:

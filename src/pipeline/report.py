@@ -71,7 +71,19 @@ def build_run_report(
     Returns:
         Dict matching the run_report.json schema.
     """
-    all_completed = all(r.status == "completed" for r in stage_results)
+    # Resolve overall_status by precedence: failed > cancelled > blocked > completed.
+    # "failed" wins because it indicates engineering breakage; "cancelled" and
+    # "blocked" are governance/environment outcomes; "completed" only applies
+    # when every stage completed successfully.
+    statuses = {r.status for r in stage_results}
+    if "failed" in statuses:
+        overall_status = "failed"
+    elif "cancelled" in statuses:
+        overall_status = "cancelled"
+    elif "blocked" in statuses:
+        overall_status = "blocked"
+    else:
+        overall_status = "completed"
 
     return {
         "project_id": f"{project_name}-v{project_version}",
@@ -82,7 +94,7 @@ def build_run_report(
         "dataset_version_id": dataset_version_id,
         "artifact_path": artifact_path,
         "executed_stages": [asdict(r) for r in stage_results],
-        "overall_status": "completed" if all_completed else "failed",
+        "overall_status": overall_status,
         "pipeline_execution_id": pipeline_execution_id,
         "mlflow_run_id": mlflow_run_id,
     }

@@ -166,6 +166,9 @@ def main() -> None:
             if result.status == "blocked":
                 overall_status = "blocked"
                 break
+            if result.status == "cancelled":
+                overall_status = "cancelled"
+                break
             if result.status == "failed":
                 logger.error("Stage '%s' failed - aborting remaining steps", stage_name)
                 overall_status = "failed"
@@ -220,6 +223,22 @@ def main() -> None:
         print("  re-run the pipeline.")
         print("=" * 60 + "\n")
         sys.exit(2)
+
+    if overall_status == "cancelled":
+        cancelled_result = next(r for r in stage_results if r.status == "cancelled")
+        print("\n" + "=" * 60)
+        print("  PIPELINE STOPPED — APPROVAL GATE COULD NOT RUN")
+        print("=" * 60)
+        for line in (cancelled_result.error or "").splitlines():
+            print(f"  {line}")
+        print()
+        print("  This run reached the approval gate in a non-interactive")
+        print("  environment (no TTY on stdin). The model has been trained")
+        print("  and evaluated but no promotion decision could be obtained.")
+        print("  Re-run interactively, or use a CI-specific config that")
+        print("  omits the 'promotion' stage.")
+        print("=" * 60 + "\n")
+        sys.exit(3)
 
     if overall_status == "failed":
         logger.error("Pipeline finished with failures")
