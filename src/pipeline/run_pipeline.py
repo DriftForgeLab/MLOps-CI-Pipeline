@@ -110,12 +110,6 @@ def main() -> None:
 
     fine_tune = args.fine_tune
 
-    # Always remove any leftover drift adaptation eval from a previous run so
-    # the promotion stage never picks up stale results.
-    _stale_eval = Path(config.output_dir) / "drift_adaptation_eval.json"
-    if _stale_eval.exists():
-        _stale_eval.unlink()
-
     config_hash = compute_config_hash(config_path)
     pipeline_execution_id = uuid.uuid4().hex
 
@@ -209,6 +203,12 @@ def main() -> None:
             mlflow.log_artifact(str(output_report_path), artifact_path="outputs")
     finally:
         mlflow.end_run()
+
+    if overall_status == "completed":
+        # Promotion succeeded — clear the drift eval so it doesn't surface on future runs.
+        _drift_eval_done = Path(config.output_dir) / "drift_adaptation_eval.json"
+        if _drift_eval_done.exists():
+            _drift_eval_done.unlink()
 
     if overall_status == "blocked":
         blocked_result = next(r for r in stage_results if r.status == "blocked")

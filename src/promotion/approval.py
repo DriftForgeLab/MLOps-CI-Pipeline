@@ -120,44 +120,78 @@ def _print_summary(
     comparison = report.get("comparison", {})
     overall_verdict = comparison.get("overall_verdict", "no_baseline")
     has_prod = comparison.get("has_production_model", False)
+    per_metric = comparison.get("per_metric") or {}
 
     print("\n" + "=" * 60)
     print("  PROMOTION SUMMARY")
     print("=" * 60)
 
-    print("\n  Evaluation metrics:")
-    for name, value in metrics.items():
-        if isinstance(value, float):
-            print(f"    {name:<20} {value:.4f}")
+    if drift_eval is not None and has_prod:
+        # Drift-adaptive retrain: split into two clearly labelled sections so
+        # the user can see both the clean-data trade-off and the drift improvement.
+        print()
+        print("  This model was retrained to adapt to data drift.")
+        print("  Two comparisons are shown: performance on the original")
+        print("  (clean) test set, and performance on the drifted data.")
 
-    print(f"\n  Comparison verdict:  {overall_verdict.upper()}")
-    print(f"  Has production model: {has_prod}")
-
-    if has_prod:
-        per_metric = comparison.get("per_metric") or {}
+        # ── Section 1: clean test set vs. production ─────────────────
+        print("\n" + "-" * 60)
+        print("  CLEAN TEST SET  —  candidate vs. current production model")
+        print("-" * 60)
         if per_metric:
-            print("\n  Per-metric delta vs production:")
-            for metric_name, data in per_metric.items():
-                delta = data.get("delta")
+            print(f"\n  {'Metric':<14}  {'Candidate':>10}  {'Production':>10}  {'Delta':>10}")
+            print(f"  {'-'*14}  {'-'*10}  {'-'*10}  {'-'*10}")
+            for mname, data in per_metric.items():
+                cand    = data.get("candidate")
+                prod    = data.get("production")
+                delta   = data.get("delta")
                 verdict = data.get("verdict", "")
-                if delta is not None:
-                    sign = "+" if delta > 0 else ""
-                    print(f"    {metric_name:<20} {sign}{delta:.4f}  ({verdict})")
-                else:
-                    print(f"    {metric_name:<20} {'N/A':<10}  ({verdict})")
+                cand_s  = f"{cand:.4f}"  if isinstance(cand,  float) else "N/A"
+                prod_s  = f"{prod:.4f}"  if isinstance(prod,  float) else "N/A"
+                sign    = "+" if isinstance(delta, float) and delta > 0 else ""
+                delta_s = f"{sign}{delta:.4f}" if isinstance(delta, float) else "N/A"
+                print(f"  {mname:<14}  {cand_s:>10}  {prod_s:>10}  {delta_s:>10}  ({verdict})")
+            print(f"\n  Overall: {overall_verdict.upper()} on the original data distribution.")
+            if overall_verdict in ("worse", "equal"):
+                print("  A small clean-data drop is expected — retraining on drifted")
+                print("  samples shifts the model toward the new data distribution.")
 
-    if drift_eval is not None:
+        # ── Section 2: drifted holdout before vs. after ───────────────
         _print_drift_eval_block(drift_eval)
+
+    else:
+        # Standard run: flat layout.
+        print("\n  Evaluation metrics:")
+        for name, value in metrics.items():
+            if isinstance(value, float):
+                print(f"    {name:<20} {value:.4f}")
+
+        if not has_prod:
+            print("\n  No production model yet — this will become the first baseline.")
+        else:
+            print(f"\n  Comparison vs. current production model: {overall_verdict.upper()}")
+            if per_metric:
+                print(f"\n  {'Metric':<20}  {'Candidate':>10}  {'Production':>10}  {'Delta':>10}")
+                print(f"  {'-'*20}  {'-'*10}  {'-'*10}  {'-'*10}")
+                for mname, data in per_metric.items():
+                    cand    = data.get("candidate")
+                    prod    = data.get("production")
+                    delta   = data.get("delta")
+                    verdict = data.get("verdict", "")
+                    cand_s  = f"{cand:.4f}"  if isinstance(cand,  float) else "N/A"
+                    prod_s  = f"{prod:.4f}"  if isinstance(prod,  float) else "N/A"
+                    sign    = "+" if isinstance(delta, float) and delta > 0 else ""
+                    delta_s = f"{sign}{delta:.4f}" if isinstance(delta, float) else "N/A"
+                    print(f"  {mname:<20}  {cand_s:>10}  {prod_s:>10}  {delta_s:>10}  ({verdict})")
+
+        if drift_eval is not None:
+            _print_drift_eval_block(drift_eval)
 
     print("\n" + "=" * 60)
 
 
 def _print_drift_eval_block(drift_eval: dict) -> None:
-    """Render the drift adaptation evaluation block inside the promotion summary.
-
-    Shows before/after accuracy on the held-out drifted images so the user
-    can factor fine-tuning improvement into their promotion decision.
-    """
+    """Render the drift adaptation evaluation block inside the promotion summary."""
     baseline = drift_eval.get("baseline", {})
     after    = drift_eval.get("after_finetuning", {})
     delta    = drift_eval.get("delta", {})
@@ -175,9 +209,9 @@ def _print_drift_eval_block(drift_eval: dict) -> None:
 
     sample_label = "drifted images" if drift_eval.get("task_type", "").startswith("image") else "drifted samples"
     print("\n" + "-" * 60)
-    print(f"  DRIFT ADAPTATION  (holdout: {n} {sample_label})")
+    print(f"  DRIFTED DATA  —  production model before vs. retrained model after")
+    print(f"  ({n} {sample_label})")
     print("-" * 60)
-    # Show metrics present in the baseline dict — handles both classification and regression
     clf_keys = [("accuracy","Accuracy"),("f1_score","F1 score"),("precision","Precision"),("recall","Recall")]
     reg_keys = [("r2","R2"),("mae","MAE"),("rmse","RMSE")]
     metric_pairs = reg_keys if "r2" in baseline else clf_keys
