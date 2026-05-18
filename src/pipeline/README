@@ -35,8 +35,9 @@ At this stage, the pipeline:
 - Writes `run_report.json` to the configured `output_dir` after every run (success or failure)
 - Exits with code 0 (success) or 1 (failure)
 
-The `preprocessing` stage is fully implemented. The `training`, `evaluation`,
-and `deployment` stages are placeholders (no-ops) to be implemented in later sprints.
+All six stages (`preprocessing`, `training`, `evaluation`, `model_analysis`,
+`promotion`, `deployment`) are implemented. See the stage table below for what
+each one does.
 
 ---
 
@@ -88,17 +89,19 @@ Design principles:
 
 Registered stages:
 
-| Stage             | Function              | Status                                            |
+| Stage             | Function                  | Status                                                                 |
 |---|---|---|
-| `preprocessing`   | `_preprocessing_stage`| Implemented — delegates to `src.data.preprocess`  |
-| `training`        | `_placeholder_stage`  | No-op                                             |
-| `evaluation`      | `_placeholder_stage`  | No-op                                             |
-| `deployment`      | `_placeholder_stage`  | No-op                                             |
+| `preprocessing`   | `_preprocessing_stage`    | Implemented — delegates to `src.data.preprocess`                       |
+| `training`        | `_training_stage`         | Implemented — delegates to `src.training.<task>.train.run_training`    |
+| `evaluation`      | `_evaluation_stage`       | Implemented — delegates to `src.evaluation.evaluate`                   |
+| `model_analysis`  | `_model_analysis_stage`   | Implemented — image-pipeline robustness / ISP sensitivity              |
+| `promotion`       | `_promotion_stage`        | Implemented — runs promotion rules + approval gate                     |
+| `deployment`      | `_deployment_stage`       | Implemented — emits deterministic `outputs/deployment_manifest.json`   |
 
-Extension point for later sprints:
+Extension point (e.g. adding a canary or image-build stage on top of the
+manifest):
 ```python
-from src.training.classification.train import run_training
-_STAGE_REGISTRY["training"] = run_training
+_STAGE_REGISTRY["canary"] = _canary_stage
 ```
 
 ---

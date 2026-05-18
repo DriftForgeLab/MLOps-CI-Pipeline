@@ -9,6 +9,7 @@ from src.config.schema import (
     ServerConfig,
     ModelServingConfig,
     HealthcheckConfig,
+    ReloadConfig,
     DeploymentConfig,
 )
 from src.config.validation import (
@@ -51,6 +52,14 @@ def _validate_deployment(raw: dict) -> list[str]:
     else:
         _validate_bool(healthcheck, "include_model_info", errors, prefix="healthcheck.")
 
+    reload = raw.get("reload", {})
+    if not isinstance(reload, dict):
+        errors.append("'reload' must be a mapping")
+    else:
+        _validate_bool(reload, "enabled", errors, prefix="reload.")
+        if "timeout_seconds" in reload:
+            _validate_positive_int(reload["timeout_seconds"], "reload.timeout_seconds", errors)
+
     return errors
 
 
@@ -58,6 +67,7 @@ def _build_deployment_config(raw: dict) -> DeploymentConfig:
     server_raw = raw.get("server", {}) or {}
     model_raw = raw.get("model", {}) or {}
     hc_raw = raw.get("healthcheck", {}) or {}
+    reload_raw = raw.get("reload", {}) or {}
 
     return DeploymentConfig(
         server=ServerConfig(
@@ -72,6 +82,11 @@ def _build_deployment_config(raw: dict) -> DeploymentConfig:
         ),
         healthcheck=HealthcheckConfig(
             include_model_info=hc_raw.get("include_model_info", True),
+        ),
+        reload=ReloadConfig(
+            enabled=reload_raw.get("enabled", False),
+            url=reload_raw.get("url", "http://localhost:8000/admin/reload"),
+            timeout_seconds=reload_raw.get("timeout_seconds", 5),
         ),
     )
 

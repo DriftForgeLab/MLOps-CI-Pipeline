@@ -1,3 +1,16 @@
+# =============================================================================
+# src/config/pipeline_cifar10.yaml — CIFAR-10 image classification pipeline config
+# =============================================================================
+# Trains a PyTorch CNN on CIFAR-10 imported into the standard ImageFolder PNG
+# layout (data/raw/cifar10/images/<class>/*.png). This is a larger, multi-class
+# benchmark variant of the standard image pipeline.
+#
+# Usage:
+#   run-pipeline --config src/config/pipeline_cifar10.yaml
+#
+# Stages: preprocessing → training → evaluation → model_analysis → promotion → deployment
+# =============================================================================
+
 project:
   name: "lightweight-mlops-pipeline"
   version: "0.1.0"
@@ -9,6 +22,7 @@ pipeline_stages:
   - "evaluation"
   - "model_analysis"
   - "promotion"
+  - "deployment"
 output_dir: "outputs"
 
 dataset: cifar10

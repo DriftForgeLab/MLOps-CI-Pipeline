@@ -25,11 +25,15 @@ What works today:
   against per-model reference data and write a timestamped JSON report.
 - Per-feature and overall severity classification (config-driven for tabular).
 - Optional interactive decision prompt when run in a TTY.
+- The promotion stage reads the latest drift result (`load_latest_drift`) and
+  passes it to the approval summary. The monitoring drift block is rendered as
+  a fallback so the reviewer always sees a drift signal; it is suppressed only
+  when a drift-adaptation eval block is shown (post-fine-tuning the raw drift
+  label would mislead). When no drift history exists an explicit
+  "no drift data" banner is rendered instead.
 
-Known gaps (tracked in `plans/rippling-sparking-sutherland.md`):
+Known gaps:
 
-- Promotion does not read the latest drift result; the approval summary's
-  drift block is wired but always receives `drift=None`.
 - High severity in non-interactive (CI/cron) mode produces only a JSON file —
   no exit code, no MLflow write-back, no alert.
 - Image severity thresholds are hard-coded in `src/drift/image_compute.py`
@@ -37,7 +41,7 @@ Known gaps (tracked in `plans/rippling-sparking-sutherland.md`):
 - Drift history is a directory of timestamped JSON files; no index, no
   MLflow trend.
 
-These gaps are scheduled for closure in subsequent phases of the linked plan.
+These are known gaps rather than bugs — closing them is planned for later phases.
 
 ## Source Layout
 

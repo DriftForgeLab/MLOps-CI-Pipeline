@@ -1,3 +1,20 @@
+# =============================================================================
+# src/common/io.py — Atomic file-write helpers
+# =============================================================================
+# Responsibility: Persist pipeline outputs to disk without ever exposing a
+# partially written file to a concurrent or later reader.
+#
+# Every stage writes its results to disk so the next stage can read them back.
+# If a process is interrupted mid-write, a half-written file could be silently
+# consumed by a later run. To prevent this, all writers here follow the same
+# pattern: write the payload to a temporary sibling file, then rename it onto
+# the target path. Path.replace() maps to an atomic rename on POSIX and Windows,
+# so a reader sees either the previous file or the complete new one.
+#
+# This module also provides sanitize_for_json(), which normalises NumPy/pandas
+# scalars and non-finite floats so generated reports stay strict-JSON compliant.
+# =============================================================================
+
 import math
 from pathlib import Path
 

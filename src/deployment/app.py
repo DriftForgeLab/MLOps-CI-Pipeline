@@ -6,6 +6,7 @@
 # =============================================================================
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -26,7 +27,9 @@ async def lifespan(app: FastAPI):
     config, deploy_config = validate_environment()
     models = load_all_production_models(config, deploy_config)
     _state["models"] = models
+    _state["config"] = config
     _state["deploy_config"] = deploy_config
+    _state["reload_lock"] = asyncio.Lock()
     logger.info(
         "API startup complete — %d model(s) loaded (stage=%s): %s",
         len(models),

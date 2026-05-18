@@ -102,15 +102,20 @@ configs:
 For raw DNG datasets, use `pipeline_image_raw.yaml` instead, which points to
 `preprocessing_raw_image.yaml`.
 
-### CIFAR-10 quick start
+### CIFAR-10
+
+CIFAR-10 is used as a larger multi-class image benchmark. Once the dataset is
+present on disk in the ImageFolder layout shown below, run:
 
 ```bash
-python scripts/import_cifar10.py
 run-pipeline --config src/config/pipeline_cifar10.yaml
 ```
 
-The importer downloads CIFAR-10 through `torchvision`, converts the train and
-test splits into deterministic PNG filenames, and writes them under:
+The conversion from the original CIFAR-10 archive into the ImageFolder layout
+was done with a separate import script that is **not included in this
+repository**. To recreate the dataset, download CIFAR-10 through `torchvision`
+and write one PNG per image into the per-class folders shown below, together
+with `data/raw/cifar10/dataset.yaml`:
 
 ```text
 data/raw/cifar10/

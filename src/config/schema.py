@@ -20,7 +20,9 @@ VALID_LOG_LEVELS: frozenset[str] = {"DEBUG", "INFO", "WARNING", "ERROR"}
 VALID_PIPELINE_STAGES: frozenset[str] = {"preprocessing", "training", "evaluation", "model_analysis", "deployment", "promotion"}
 VALID_ALGORITHMS: frozenset[str] = {"random_forest", "logistic_regression", "linear_regression", "cnn", "gradient_boosting"}
 VALID_SOLVERS: frozenset[str] = {"lbfgs", "saga", "liblinear"}
-VALID_CLASS_WEIGHTS: frozenset[str] = {"balanced"} ## May need other weights later
+# Only sklearn's "balanced" class-weight strategy is accepted. Add more
+# strategies here (and to the loaders) if other weighting schemes are needed.
+VALID_CLASS_WEIGHTS: frozenset[str] = {"balanced"}
 
 REQUIRED_MODEL_KEYS: frozenset[str] = {"algorithm", "hyperparameters"}
 _OPTIONAL_MODEL_KEYS: frozenset[str] = frozenset({"architecture"})
@@ -144,15 +146,21 @@ class SubConfigPaths:
     deployment: str
     drift: str
 
+# This dataclass mirrors the hyperparameter block of training_classification.yaml.
+# If new Random Forest hyperparameters are added to that YAML file, add the
+# matching fields here (and to RF_HYPERPARAMS_KEYS) so the loader stays in sync.
 @dataclass(frozen=True)
-class RandomForestHyperparams: ### Remember to change this DataCalss if Training_Classification.yaml is updated in later sprints
+class RandomForestHyperparams:
     n_estimators: int = 100
     max_depth: int | None = None
     min_samples_split: int = 2
     class_weight: str | None = None
 
+# This dataclass mirrors the hyperparameter block used by the Logistic
+# Regression classifier. Keep its fields aligned with LR_HYPERPARAMS_KEYS and
+# the corresponding training YAML if either is extended.
 @dataclass(frozen=True)
-class LogisticRegressionHyperparams: ### Remember to change this DataCalss if Training_Regression.yaml is updated in later sprints
+class LogisticRegressionHyperparams:
     C: float = 1.0
     solver: str = "lbfgs"
     max_iter: int = 200
@@ -388,7 +396,11 @@ class PipelineConfig:
 class ClassificationEvalConfig:
     averaging: str = "weighted"
 
-@dataclass(frozen=True) ### This dataclass is currently empty
+# Regression evaluation currently needs no configurable options: the regression
+# metrics (MAE, MSE, RMSE, R²) take no parameters. This placeholder keeps the
+# evaluation-config structure symmetric with ClassificationEvalConfig and gives
+# future regression-specific options a place to live.
+@dataclass(frozen=True)
 class RegressionEvalConfig:
     pass
 
@@ -417,6 +429,7 @@ class PromotionTaskConfig:
 class PromotionConfig:
     classification: PromotionTaskConfig
     regression: PromotionTaskConfig
+    promotion_evaluation_split: str = "val"
 
 # ---------------------------------------------------------------------------
 # Deployment config dataclasses
@@ -439,10 +452,18 @@ class HealthcheckConfig:
     include_model_info: bool = True
 
 @dataclass(frozen=True)
+class ReloadConfig:
+    """Opt-in pipeline-side trigger for the API model-reload endpoint."""
+    enabled: bool = False
+    url: str = "http://localhost:8000/admin/reload"
+    timeout_seconds: int = 5
+
+@dataclass(frozen=True)
 class DeploymentConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     model: ModelServingConfig = field(default_factory=ModelServingConfig)
     healthcheck: HealthcheckConfig = field(default_factory=HealthcheckConfig)
+    reload: ReloadConfig = field(default_factory=ReloadConfig)
 
 # ---------------------------------------------------------------------------
 # Drift config dataclasses

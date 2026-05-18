@@ -187,6 +187,15 @@ def _print_summary(
         if drift_eval is not None:
             _print_drift_eval_block(drift_eval)
 
+    # Fallback: when no drift-adaptation eval block was rendered, surface the
+    # monitoring drift status so the reviewer always sees the governance
+    # signal. _print_drift_block handles drift=None with an explicit
+    # "no drift data" banner. The block is suppressed when a drift_eval block
+    # is shown — the raw pre-training "high drift" label would mislead after
+    # fine-tuning, and the adaptation eval block already covers that state.
+    if drift_eval is None:
+        _print_drift_block(drift)
+
     print("\n" + "=" * 60)
 
 

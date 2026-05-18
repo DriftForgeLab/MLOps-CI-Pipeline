@@ -21,3 +21,13 @@ model:
 healthcheck:
   # Include model metadata (version, run_id, algorithm) in health response.
   include_model_info: true
+
+reload:
+  # Opt-in: after a successful pipeline run, POST the reload endpoint so a
+  # running API picks up a freshly promoted model with no restart.
+  # Disabled by default — keeps the pipeline side-effect-free and CI-safe.
+  enabled: false
+  # Reload endpoint of the running prediction API.
+  url: "http://localhost:8000/admin/reload"
+  # Max seconds to wait for the reload HTTP call before giving up.
+  timeout_seconds: 5

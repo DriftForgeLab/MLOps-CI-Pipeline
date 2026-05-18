@@ -19,8 +19,12 @@ from src.data.image_utils import compute_folder_hash
 
 
 def _compute_version_id(csv_path: Path) -> str:
+    # Normalise CRLF -> LF before hashing so the version ID is reproducible
+    # across platforms (a Windows checkout must not produce a different ID
+    # than a Unix one for byte-identical CSV content).
     raw_bytes = csv_path.read_bytes()
-    return hashlib.sha256(raw_bytes).hexdigest()[:12]
+    normalised = raw_bytes.replace(b"\r\n", b"\n")
+    return hashlib.sha256(normalised).hexdigest()[:12]
 
 
 def create_dataset_version(dataset_name: str, raw_dir: Path = Path("data/raw"), processed_dir: Path = Path("data/processed")) -> Path:

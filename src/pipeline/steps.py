@@ -4,9 +4,10 @@
 # Responsibility: Execute individual pipeline stages with structured logging
 # and timing. Each stage is wrapped with START/END markers for observability.
 #
-# Sprint 1 scope: Stages are placeholders (no-ops). The execution framework
-# is real — START/END markers, timing, status tracking, error handling.
-# Later sprints will register actual stage implementations (training, etc.)
+# Each stage is a real implementation: preprocessing, training, evaluation,
+# model_analysis (image pipelines only), promotion, and deployment (manifest
+# generation). The execution framework wraps each call with START/END
+# markers, timing, and status tracking.
 #
 # Design: Each stage returns a StageResult dataclass capturing what happened.
 # This feeds into the run report for traceability.
@@ -72,10 +73,6 @@ class StageResult:
     ended_at: str
     duration_seconds: float
     error: str | None = None
-
-def _placeholder_stage(config: PipelineConfig, version_id: str) -> None:
-    logger.info("  (no-op placeholder — Sprint 1)")
-
 
 def _preprocessing_stage(config: PipelineConfig, version_id: str) -> None:
     prep_config_path = Path(config.configs.preprocessing)
@@ -467,19 +464,42 @@ def _promotion_stage(config: PipelineConfig, version_id: str) -> None:
     with open(report_path) as f:
         report = json.load(f)
 
-    # Run threshold rules
+    # Run threshold rules against the configured evaluation split(s).
     promotion_config = load_promotion_config(Path(config.configs.promotion))
-    violations = run_promotion_rules(report["metrics"], config.task_type, promotion_config)
+    eval_split = promotion_config.promotion_evaluation_split
+    test_report = report.get("official_test_report") or {}
+
+    splits_to_check: list[tuple[str, dict]] = []
+    if eval_split in ("val", "both"):
+        splits_to_check.append(("val", report["metrics"]))
+    if eval_split in ("test", "both"):
+        test_metrics = test_report.get("metrics")
+        if test_metrics is None:
+            raise RuntimeError(
+                f"promotion_evaluation_split='{eval_split}' requires a held-out "
+                "test-split report, but none was produced — the test/ split is "
+                "empty or missing. Set promotion_evaluation_split to 'val' or "
+                "ensure the dataset produces a populated test split."
+            )
+        splits_to_check.append(("test", test_metrics))
+
+    violations: list[dict] = []
+    for split_name, split_metrics in splits_to_check:
+        for v in run_promotion_rules(split_metrics, config.task_type, promotion_config):
+            violations.append({**v, "split": split_name})
 
     if violations:
         violation_lines = "\n  ".join(
-            f"[{v['rule_id']}] {v['metric']}={v['observed']} "
+            f"[{v['split']}:{v['rule_id']}] {v['metric']}={v['observed']} "
             f"(required {v['operator']} {v['threshold']}): {v['description']}"
             for v in violations
         )
         raise PromotionBlockedError(
-            f"Promotion blocked — {len(violations)} rule(s) failed:\n  {violation_lines}"
+            f"Promotion blocked — {len(violations)} rule(s) failed "
+            f"(evaluation split: {eval_split}):\n  {violation_lines}"
         )
+
+    logger.info("  Promotion rules evaluated on split: %s", eval_split)
 
     # Log comparison summary
     comparison = report.get("comparison", {})
@@ -536,6 +556,7 @@ def _promotion_stage(config: PipelineConfig, version_id: str) -> None:
         "reason":             result.reason,
         "run_id":             mlflow_run_id,
         "dataset_version_id": version_id,
+        "evaluation_split":   eval_split,
         "metrics":            report.get("metrics", {}),
         "comparison":         report.get("comparison", {}),
         "drift":              _drift_provenance(drift, model_name),
@@ -771,13 +792,189 @@ def _run_tabular_drift_adaptation_eval(
     }
 
 
+def _deployment_stage(config: PipelineConfig, version_id: str) -> None:
+    """Emit a deterministic deployment manifest describing the deployable state.
+
+    Reads the active MLflow run, the promotion decision, the registry's
+    current Production model (if any), and the deployment.yaml service
+    config. Writes outputs/deployment_manifest.json. Does NOT provision
+    infrastructure, build images, or call external services.
+    """
+    from src.config.loader import load_deployment_config
+    from src.config.schema import DeploymentConfig
+    from src.registry.model_registry import resolve_tracking_uri
+
+    output_dir = Path(config.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    warnings: list[str] = []
+
+    # 1. Deployment config (safe-default on any error)
+    try:
+        deploy_cfg = load_deployment_config(Path(config.configs.deployment))
+    except Exception as exc:
+        logger.warning("deployment_config_load_failed: %s — using defaults", exc)
+        deploy_cfg = DeploymentConfig()
+        warnings.append("deployment_config_missing")
+
+    # 2. Registry name + tracking URI
+    model_name = resolve_model_name(config)
+    tracking_uri = resolve_tracking_uri(config)
+
+    # 3. Read promotion_decision.json if present
+    promotion_path = output_dir / "promotion_decision.json"
+    promotion_record: dict = {}
+    if promotion_path.exists():
+        try:
+            promotion_record = json.loads(promotion_path.read_text())
+        except Exception as exc:
+            logger.warning("promotion_decision_unreadable: %s", exc)
+            warnings.append("promotion_decision_unreadable")
+
+    # 4. Active MLflow run (orchestrator opens one before stages run)
+    execution_id = None
+    experiment_name = None
+    active = mlflow.active_run()
+    if active is not None:
+        execution_id = active.info.run_id
+        try:
+            experiment_name = mlflow.get_experiment(active.info.experiment_id).name
+        except Exception:
+            experiment_name = None
+
+    # 5. Query registry for current Production model (safe-default on error)
+    registry_version = None
+    registry_run_id = None
+    algorithm = None
+    trained_at = None
+    dataset_version_id_from_tag = None
+    try:
+        client = mlflow.tracking.MlflowClient(tracking_uri=tracking_uri)
+        versions = client.get_latest_versions(model_name, stages=[deploy_cfg.model.allowed_stage])
+        if versions:
+            mv = versions[0]
+            registry_version = mv.version
+            registry_run_id = mv.run_id
+            try:
+                run = client.get_run(mv.run_id)
+                tags = run.data.tags or {}
+                algorithm = tags.get("lineage.algorithm")
+                trained_at = tags.get("lineage.trained_at")
+                dataset_version_id_from_tag = tags.get("lineage.dataset_version_id")
+            except Exception as exc:
+                logger.warning("registry_run_lookup_failed: %s", exc)
+                warnings.append("registry_run_lookup_failed")
+    except Exception as exc:
+        logger.warning("mlflow_registry_unreachable: %s", exc)
+        warnings.append("mlflow_registry_unreachable")
+
+    # 6. Local artifact path
+    local_artifact_path = None
+    resolved_run_id = registry_run_id or promotion_record.get("run_id")
+    if resolved_run_id:
+        candidate = Path("artifacts") / "runs" / resolved_run_id / "model"
+        if candidate.exists():
+            local_artifact_path = str(candidate)
+        else:
+            warnings.append("local_artifact_missing")
+
+    # 7. Readiness
+    if "mlflow_registry_unreachable" in warnings:
+        readiness_status = "mlflow_unavailable"
+    elif registry_version is None:
+        readiness_status = "no_production_model"
+    elif promotion_record.get("outcome") != "approved":
+        readiness_status = "promotion_not_approved"
+    else:
+        readiness_status = "ready"
+
+    manifest = {
+        "schema_version": "1.0",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "pipeline": {
+            "task_type": config.task_type,
+            "dataset_version_id": version_id,
+            "config_dataset": config.dataset,
+            "output_dir": config.output_dir,
+            "execution_id": execution_id,
+            "mlflow_experiment_name": experiment_name,
+            "tracking_uri": tracking_uri,
+        },
+        "model": {
+            "registry_name": model_name,
+            "registry_version": registry_version,
+            "stage": deploy_cfg.model.allowed_stage if registry_version else None,
+            "run_id": resolved_run_id,
+            "algorithm": algorithm,
+            "trained_at": trained_at,
+            "dataset_version_id": dataset_version_id_from_tag or promotion_record.get("dataset_version_id"),
+            "metrics": promotion_record.get("metrics"),
+            "local_artifact_path": local_artifact_path,
+        },
+        "promotion": {
+            "outcome": promotion_record.get("outcome"),
+            "run_id": promotion_record.get("run_id"),
+            "reason": promotion_record.get("reason"),
+            "comparison_verdict": (promotion_record.get("comparison") or {}).get("overall_verdict"),
+        },
+        "service": {
+            "app_import": "src.deployment.app:app",
+            "entrypoint_cli": "run-api",
+            "endpoints": ["GET /health", "GET /models", "POST /predict"],
+            "host": deploy_cfg.server.host,
+            "port": deploy_cfg.server.port,
+            "log_level": deploy_cfg.server.log_level,
+            "allowed_stage": deploy_cfg.model.allowed_stage,
+            "require_production_model": deploy_cfg.model.require_production_model,
+            "startup_timeout_seconds": deploy_cfg.model.startup_timeout_seconds,
+        },
+        "container": {
+            "dockerfile": "docker/Dockerfile",
+            "compose_file": "docker/docker-compose.yml",
+            "compose_service": "prediction-api",
+            "image_name": "mlops-prediction-api",
+            "suggested_image_tag": f"{model_name}:{version_id}",
+            "exposed_port": 8000,
+        },
+        "env_template": [
+            f"MLFLOW_TRACKING_URI={tracking_uri}",
+            f"API_PORT={deploy_cfg.server.port}",
+            f"MODEL_STAGE={deploy_cfg.model.allowed_stage}",
+            "MODEL_DEVICE=auto",
+            f"LOG_LEVEL={deploy_cfg.server.log_level.upper()}",
+        ],
+        "outputs": {
+            "evaluation_report": str(Path(config.output_dir) / "evaluation_report.json"),
+            "promotion_decision": str(Path(config.output_dir) / "promotion_decision.json"),
+            "run_report": str(Path(config.output_dir) / "run_report.json"),
+        },
+        "readiness": {
+            "status": readiness_status,
+            "warnings": warnings,
+        },
+        "notes": [
+            "This manifest declares deployment metadata only. It does not provision infrastructure, build or push container images, start Docker containers, or call external services.",
+            "Live serving is performed out-of-band by the FastAPI application started via 'run-api' or 'docker compose -f docker/docker-compose.yml up --build'.",
+        ],
+    }
+
+    manifest_path = output_dir / "deployment_manifest.json"
+    atomic_write_json(manifest_path, manifest)
+    logger.info(
+        "  Deployment manifest written: %s — readiness=%s, model=%s%s",
+        manifest_path,
+        readiness_status,
+        model_name,
+        f" v{registry_version}" if registry_version else "",
+    )
+
+
 _STAGE_REGISTRY: dict[str, Callable] = {
     "preprocessing":  _preprocessing_stage,
     "training":       _training_stage,
     "evaluation":     _evaluation_stage,
     "model_analysis": _model_analysis_stage,
     "promotion":      _promotion_stage,
-    "deployment":     _placeholder_stage,
+    "deployment":     _deployment_stage,
 }
 
 

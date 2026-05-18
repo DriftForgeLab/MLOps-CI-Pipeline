@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import io
 
@@ -5,7 +6,7 @@ import httpx
 import numpy as np
 import pytest
 from fastapi import FastAPI
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from src.deployment.routes import router
 from src.deployment.startup_checks import ProductionModelInfo
@@ -18,6 +19,7 @@ pytestmark = pytest.mark.anyio
 def _make_model_info(
     *,
     model_name="iris-classifier",
+    model_version="1",
     algorithm="random_forest",
     model_format="sklearn",
     task_type="classification",
@@ -36,7 +38,7 @@ def _make_model_info(
     return ProductionModelInfo(
         model=model,
         model_name=model_name,
-        model_version="1",
+        model_version=model_version,
         run_id="run-123",
         stage="Production",
         algorithm=algorithm,
@@ -54,10 +56,20 @@ def _make_model_info(
 
 
 def _make_app(models: dict | None = None) -> FastAPI:
-    """Create a fresh FastAPI app with the router and pre-loaded model state."""
+    """Create a fresh FastAPI app with the router and pre-loaded model state.
+
+    The state mirrors what ``app.lifespan`` seeds at startup, including the
+    ``config``/``deploy_config`` needed to rebuild models and the
+    ``reload_lock`` that serializes ``POST /admin/reload``.
+    """
     test_app = FastAPI()
     test_app.include_router(router)
-    test_app.state.model_state = {"models": models or {}}
+    test_app.state.model_state = {
+        "models": models or {},
+        "config": object(),
+        "deploy_config": object(),
+        "reload_lock": asyncio.Lock(),
+    }
     return test_app
 
 
@@ -350,3 +362,113 @@ class TestPredictImage:
             import torch
             tensor = info.model.predict.call_args[0][0]
             assert torch.all(torch.isfinite(tensor))
+
+
+# ── POST /admin/reload ──────────────────────────────────────────────────────
+
+class TestAdminReload:
+    async def test_reload_returns_summary(self):
+        new = _make_model_info(model_name="iris-classifier", model_version="2")
+        app = _make_app({"iris-classifier": _make_model_info(model_version="1")})
+        with patch(
+            "src.deployment.routes.load_all_production_models",
+            return_value={"iris-classifier": new},
+        ):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.post("/admin/reload")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "reloaded"
+        assert data["models_loaded"] == 1
+        assert data["models"] == [{"name": "iris-classifier", "version": "2"}]
+        assert "reloaded_at" in data
+
+    async def test_reload_swaps_in_new_version(self):
+        app = _make_app({"iris-classifier": _make_model_info(model_version="1")})
+        new = _make_model_info(model_name="iris-classifier", model_version="2")
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            before = (await client.get("/models")).json()
+            assert before[0]["version"] == "1"
+            with patch(
+                "src.deployment.routes.load_all_production_models",
+                return_value={"iris-classifier": new},
+            ):
+                await client.post("/admin/reload")
+            after = (await client.get("/models")).json()
+            assert after[0]["version"] == "2"
+
+    async def test_reload_failure_keeps_old_models(self):
+        old = _make_model_info(model_version="1")
+        app = _make_app({"iris-classifier": old})
+        with patch(
+            "src.deployment.routes.load_all_production_models",
+            side_effect=RuntimeError("registry unreachable"),
+        ):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.post("/admin/reload")
+                assert resp.status_code == 503
+                assert resp.json()["status"] == "reload_failed"
+                # old models stay live; app does not crash
+                health = await client.get("/health")
+                assert health.status_code == 200
+                models = (await client.get("/models")).json()
+                assert models[0]["version"] == "1"
+
+    async def test_reload_rejects_missing_token(self, monkeypatch):
+        monkeypatch.setenv("API_ADMIN_TOKEN", "s3cret")
+        app = _make_app({"iris-classifier": _make_model_info()})
+        with patch("src.deployment.routes.load_all_production_models") as loader:
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.post("/admin/reload")
+        assert resp.status_code == 403
+        loader.assert_not_called()
+
+    async def test_reload_rejects_wrong_token(self, monkeypatch):
+        monkeypatch.setenv("API_ADMIN_TOKEN", "s3cret")
+        app = _make_app({"iris-classifier": _make_model_info()})
+        with patch("src.deployment.routes.load_all_production_models"):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.post(
+                    "/admin/reload", headers={"X-Admin-Token": "wrong"}
+                )
+        assert resp.status_code == 403
+
+    async def test_reload_accepts_correct_token(self, monkeypatch):
+        monkeypatch.setenv("API_ADMIN_TOKEN", "s3cret")
+        info = _make_model_info()
+        app = _make_app({"iris-classifier": info})
+        with patch(
+            "src.deployment.routes.load_all_production_models",
+            return_value={"iris-classifier": info},
+        ):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.post(
+                    "/admin/reload", headers={"X-Admin-Token": "s3cret"}
+                )
+        assert resp.status_code == 200
+
+    async def test_reload_allows_when_no_token_configured(self, monkeypatch):
+        monkeypatch.delenv("API_ADMIN_TOKEN", raising=False)
+        info = _make_model_info()
+        app = _make_app({"iris-classifier": info})
+        with patch(
+            "src.deployment.routes.load_all_production_models",
+            return_value={"iris-classifier": info},
+        ):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.post("/admin/reload")
+        assert resp.status_code == 200

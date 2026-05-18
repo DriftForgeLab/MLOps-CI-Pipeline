@@ -17,7 +17,6 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
-import yaml
 
 from src.config.loader import PipelineConfig, load_evaluation_config, load_promotion_config
 from src.config.schema import CLASSIFICATION_TASK_TYPES, IMAGE_TASK_TYPES
@@ -96,14 +95,25 @@ def _build_split_report(
     }
 
 
-def _should_run_official_test(version_dir: Path) -> bool:
-    yaml_path = version_dir / "dataset.yaml"
-    if not yaml_path.exists():
-        return False
-    with open(yaml_path) as f:
-        metadata = yaml.safe_load(f) or {}
-    split_meta = metadata.get("split") or {}
-    return bool(split_meta.get("preserved_original_test"))
+def _load_optional_test_split(
+    config: PipelineConfig,
+    preprocessed_dir: Path,
+    output_features: list[str],
+    target: str,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Load the preprocessed test split, or None when it is missing or empty.
+
+    Tabular and image runs both produce a held-out test/ split. It is loaded
+    here unconditionally so the evaluation report can carry test-split metrics
+    that promotion may gate on (see promotion_evaluation_split).
+    """
+    try:
+        X, y_true = _load_split_arrays(config, preprocessed_dir, output_features, target, "test")
+    except FileNotFoundError:
+        return None
+    if len(y_true) == 0:
+        return None
+    return X, y_true
 
 
 def evaluate(
@@ -182,8 +192,9 @@ def evaluate(
         "comparison": comparison,
     }
 
-    if _should_run_official_test(version_dir):
-        X_test, y_test = _load_split_arrays(config, preprocessed_dir, output_features, target, "test")
+    test_split = _load_optional_test_split(config, preprocessed_dir, output_features, target)
+    if test_split is not None:
+        X_test, y_test = test_split
         y_test_pred = model.predict(X_test)
         test_metrics = _compute_metrics(y_test, y_test_pred, config.task_type, eval_config)
         report["official_test_report"] = _build_split_report(
@@ -192,7 +203,7 @@ def evaluate(
             split_name="test",
             metrics=test_metrics,
         )
-        logger.info("  Official test evaluation complete: metrics=%s", test_metrics)
+        logger.info("  Held-out test-split evaluation complete: metrics=%s", test_metrics)
 
     logger.info(
         "  Evaluation complete: task_type=%s, metrics=%s",

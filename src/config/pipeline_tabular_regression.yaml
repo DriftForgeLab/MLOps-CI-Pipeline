@@ -7,9 +7,9 @@
 # Usage:
 #   run-pipeline --config src/config/pipeline_tabular_regression.yaml
 #
-# Stages: preprocessing → training → evaluation → promotion
+# Stages: preprocessing → training → evaluation → promotion → deployment
 # Metrics tracked in MLflow: eval.mae, eval.mse, eval.rmse, eval.r2
-# Promotion gates (promotion.yaml): R² >= 0.75 and MAE <= 0.55
+# Promotion gates (promotion.yaml): R² >= 0.80 and MAE <= 0.40
 # =============================================================================
 
 project:
@@ -25,6 +25,7 @@ pipeline_stages:
   - "training"
   - "evaluation"
   - "promotion"
+  - "deployment"
 
 output_dir: "outputs"
 

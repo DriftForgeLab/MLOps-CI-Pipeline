@@ -44,9 +44,19 @@ def _build_promotion_task_config(raw: dict) -> PromotionTaskConfig:
     return PromotionTaskConfig(rules=tuple(rules))
 
 
+_VALID_PROMOTION_SPLITS = {"val", "test", "both"}
+
+
 def load_promotion_config(path: Path) -> PromotionConfig:
     raw = _load_yaml(path)
+    eval_split = raw.get("promotion_evaluation_split", "val")
+    if eval_split not in _VALID_PROMOTION_SPLITS:
+        raise ValueError(
+            f"Promotion config: invalid promotion_evaluation_split '{eval_split}' "
+            f"— must be one of {sorted(_VALID_PROMOTION_SPLITS)}."
+        )
     return PromotionConfig(
         classification=_build_promotion_task_config(raw.get("classification", {})),
         regression=_build_promotion_task_config(raw.get("regression", {})),
+        promotion_evaluation_split=eval_split,
     )

@@ -188,10 +188,11 @@ class TestPrintSummary:
         assert "accuracy" in output
         assert "0.9500" in output
 
-    def test_prints_comparison_verdict(self, capsys):
+    def test_prints_no_baseline_message(self, capsys):
         _print_summary(_minimal_report())
         output = capsys.readouterr().out
-        assert "NO_BASELINE" in output
+        assert "No production model yet" in output
+        assert "first baseline" in output
 
     def test_prints_per_metric_deltas_when_production_exists(self, capsys):
         report = _minimal_report(
@@ -229,29 +230,52 @@ class TestPrintSummary:
 # ── _print_summary: drift block ──────────────────────────────────────────────
 
 class TestPrintSummaryDrift:
-    """Verify monitoring drift block is NOT shown in the promotion summary.
+    """Verify the monitoring drift block renders in the promotion summary.
 
-    The drift monitoring block reflects pre-training detection state and is
-    intentionally excluded from the promotion summary because it would be
-    misleading after fine-tuning (a "high drift" label persists even after
-    the model has adapted). The drift adaptation eval block is shown instead.
-    The internal _print_drift_block helper still exists for standalone use.
+    The monitoring drift block reflects pre-training detection state. It is
+    shown as a *fallback* so the reviewer always sees a drift signal, but is
+    suppressed when a drift-adaptation eval block is present — after
+    fine-tuning the raw "high drift" label is misleading, and the adaptation
+    eval block communicates the post-fine-tuning state instead.
     """
 
-    def test_drift_not_shown_in_summary(self, capsys):
-        """Promotion summary must not contain a DRIFT STATUS block."""
+    def test_drift_shown_in_summary(self, capsys):
+        """Promotion summary shows the DRIFT STATUS block when drift is given."""
         _print_summary(_minimal_report(), drift=_drift_dict())
         output = capsys.readouterr().out
-        assert "DRIFT STATUS" not in output
+        assert "DRIFT STATUS" in output
 
-    def test_drift_none_not_shown_in_summary(self, capsys):
-        """drift=None must also produce no DRIFT STATUS block in the summary."""
+    def test_drift_none_shows_no_data_banner(self, capsys):
+        """drift=None renders the explicit 'no drift data' banner."""
         _print_summary(_minimal_report(), drift=None)
         output = capsys.readouterr().out
+        assert "DRIFT STATUS" in output
+        assert "No drift data available" in output
+
+    def test_image_drift_shown_in_summary(self, capsys):
+        """An image-drift result also renders the DRIFT STATUS block."""
+        drift = _drift_dict()
+        drift["drift_type"] = "image_embedding"
+        _print_summary(_minimal_report(), drift=drift)
+        output = capsys.readouterr().out
+        assert "DRIFT STATUS" in output
+
+    def test_drift_block_suppressed_when_drift_eval_present(self, capsys):
+        """When a drift-adaptation eval block renders, the monitoring block is suppressed."""
+        drift_eval = {
+            "n_holdout_images": 4,
+            "baseline": {"accuracy": 0.5, "f1_score": 0.33, "precision": 0.25, "recall": 0.5},
+            "after_finetuning": {"accuracy": 1.0, "f1_score": 1.0, "precision": 1.0, "recall": 1.0},
+            "delta": {"accuracy": 0.5, "f1_score": 0.67, "precision": 0.75, "recall": 0.5},
+            "improved": True,
+        }
+        _print_summary(_minimal_report(), drift=_drift_dict(), drift_eval=drift_eval)
+        output = capsys.readouterr().out
+        assert "DRIFTED DATA" in output  # drift-adaptation eval block rendered
         assert "DRIFT STATUS" not in output
 
     def test_drift_eval_shown_when_provided(self, capsys):
-        """drift_eval dict must produce a DRIFT ADAPTATION block in the summary."""
+        """drift_eval dict must produce a DRIFTED DATA block in the summary."""
         drift_eval = {
             "n_holdout_images": 4,
             "baseline": {"accuracy": 0.5, "f1_score": 0.33, "precision": 0.25, "recall": 0.5},
@@ -261,7 +285,7 @@ class TestPrintSummaryDrift:
         }
         _print_summary(_minimal_report(), drift_eval=drift_eval)
         output = capsys.readouterr().out
-        assert "DRIFT ADAPTATION" in output
+        assert "DRIFTED DATA" in output
         assert "IMPROVED" in output
         assert "DRIFT STATUS" not in output
 
@@ -275,25 +299,26 @@ class TestPrintSummaryDrift:
 # ── request_approval: drift kwarg not shown; drift_eval kwarg shown ──────────
 
 class TestRequestApprovalDrift:
-    def test_drift_kwarg_not_shown_in_summary(self, monkeypatch, capsys):
-        """Passing drift= to request_approval must not render a DRIFT STATUS block."""
+    def test_drift_kwarg_shown_in_summary(self, monkeypatch, capsys):
+        """Passing drift= to request_approval renders the DRIFT STATUS block."""
         monkeypatch.setattr("builtins.input", lambda prompt: "1")
         drift = _drift_dict(severity="low")
         result = request_approval(_minimal_report(), drift=drift)
         output = capsys.readouterr().out
-        assert "DRIFT STATUS" not in output
+        assert "DRIFT STATUS" in output
         assert result.approved is True
 
-    def test_no_drift_kwarg_no_drift_block(self, monkeypatch, capsys):
-        """Default drift=None produces no drift block."""
+    def test_no_drift_kwarg_shows_no_data_banner(self, monkeypatch, capsys):
+        """Default drift=None renders the explicit 'no drift data' banner."""
         monkeypatch.setattr("builtins.input", lambda prompt: "1")
         result = request_approval(_minimal_report())
         output = capsys.readouterr().out
-        assert "DRIFT STATUS" not in output
+        assert "DRIFT STATUS" in output
+        assert "No drift data available" in output
         assert result.approved is True
 
     def test_drift_eval_kwarg_shown_in_summary(self, monkeypatch, capsys):
-        """Passing drift_eval= renders the DRIFT ADAPTATION block before the prompt."""
+        """Passing drift_eval= renders the DRIFTED DATA block before the prompt."""
         monkeypatch.setattr("builtins.input", lambda prompt: "1")
         drift_eval = {
             "n_holdout_images": 4,
@@ -304,7 +329,7 @@ class TestRequestApprovalDrift:
         }
         result = request_approval(_minimal_report(), drift_eval=drift_eval)
         output = capsys.readouterr().out
-        assert "DRIFT ADAPTATION" in output
+        assert "DRIFTED DATA" in output
         assert "IMPROVED" in output
         assert result.approved is True
 
@@ -321,10 +346,10 @@ class TestPrintDriftEvalBlock:
             "improved": improved,
         }
 
-    def test_shows_drift_adaptation_header(self, capsys):
+    def test_shows_drifted_data_header(self, capsys):
         _print_drift_eval_block(self._eval_dict())
         output = capsys.readouterr().out
-        assert "DRIFT ADAPTATION" in output
+        assert "DRIFTED DATA" in output
 
     def test_shows_improved_when_improved(self, capsys):
         _print_drift_eval_block(self._eval_dict(improved=True))

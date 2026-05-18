@@ -2,104 +2,123 @@
 
 ## Responsibility
 
-The `config` module provides centralized configuration loading and validation.
+The `config` module is the centralized authority for configuration loading and
+validation.
 
 It is the only module that:
 - Reads YAML configuration files from disk
-- Parses raw YAML safely
-- Validates configuration structure
+- Parses raw YAML safely (`yaml.safe_load`)
+- Validates configuration structure and values
 - Constructs typed, immutable configuration objects
 
-All other modules receive an already validated `PipelineConfig` object.
+All other modules receive an already-validated config object (e.g.
+`PipelineConfig`) and never touch raw YAML.
 
 ---
 
 ## Design Principles
 
-- Fail-fast validation
-- Explicit required keys
-- Controlled allowed values (task type, log level)
+- Fail-fast validation — invalid config raises before any stage runs
+- Explicit required keys, checked per section
+- Controlled allowed values (task type, log level, stage names, algorithms, …)
 - Immutable configuration (`@dataclass(frozen=True)`)
 - Clear separation between parsing and usage
 
-The configuration module acts as the runtime configuration authority for the pipeline.
+---
+
+## Module layout
+
+The Python code is split by responsibility:
+
+| File | Responsibility |
+|------|----------------|
+| `schema.py` | All frozen dataclasses (`PipelineConfig`, `TrainingConfig`, …) and the `VALID_*` / `REQUIRED_*` constant sets. |
+| `validation.py` | Shared validation helpers (`_validate_enum`, `_validate_section`, …). |
+| `loader.py` | Public facade — re-exports every `load_*` function and dataclass so existing imports keep working. |
+| `pipeline_loader.py` | `load_config` → `PipelineConfig` (the top-level config). |
+| `training_loader.py` | `load_training_config` → `TrainingConfig`. |
+| `preprocessing_loader.py` | `load_preprocessing_config` → `PreprocessingConfig`. |
+| `evaluation_loader.py` | `load_evaluation_config` → `EvaluationConfig`. |
+| `promotion_loader.py` | `load_promotion_config` → `PromotionConfig`. |
+| `deployment_loader.py` | `load_deployment_config` → `DeploymentConfig`. |
+| `drift_loader.py` | `load_drift_config` → `DriftConfig`. |
 
 ---
 
-## Files
+## Pipeline configs
 
-### `pipeline.yaml`
+A run is selected by passing one pipeline config to `run-pipeline --config`.
+There is one file per task rather than a single generic `pipeline.yaml`:
 
-Top-level runtime configuration.
+| File | Task |
+|------|------|
+| `pipeline_tabular_classification.yaml` | Tabular classification |
+| `pipeline_tabular_classification_ci.yaml` | Tabular classification, CI variant (no `promotion` stage) |
+| `pipeline_tabular_regression.yaml` | Tabular regression |
+| `pipeline_image_cnn.yaml`, `pipeline_cifar10.yaml` | Standard-image CNN classification |
+| `pipeline_image_raw.yaml`, `pipeline_fivek.yaml` | Raw-image (ISP → CNN) classification |
 
-Defines:
-- Project metadata (name, version)
-- Task type (`classification` or `regression`)
-- Random seed
-- Data directory paths
-- Sub-configuration paths
-- Logging level
-- Pipeline stages (ordered list: `preprocessing`, `training`, `evaluation`, `deployment`)
-- Output directory for pipeline artifacts
+Each pipeline config defines:
+- Project metadata (`project.name`, `project.version`)
+- `task_type` — one of `classification`, `regression`, `image_classification_cnn`
+- `random_seed`
+- `dataset` and `data` directory paths
+- `pipeline_stages` — ordered subset of `preprocessing`, `training`,
+  `evaluation`, `model_analysis`, `promotion`, `deployment`
+- `output_dir`
+- `log_level`
+- `mlflow` settings
+- `configs` — paths to the sub-configs below
 
-This file determines pipeline runtime behavior.
-
----
-
-### `loader.py`
-
-Core configuration loader and validator.
-
-Responsibilities:
-- Ensure file exists
-- Parse YAML using `yaml.safe_load`
-- Validate required top-level keys
-- Validate nested keys (`project`, `data`, `configs`)
-- Validate value constraints (task type, log level, seed type)
-- Build structured `PipelineConfig` object
-
-Validation currently includes:
-- Required key checks
-- Enum validation (task type, log level)
-- Basic type validation (e.g., random_seed is int)
-- Pipeline stages validation (must be list, non-empty, valid stage names)
-- Output directory type validation
-- Required `configs` sub-keys: `preprocessing`, `training`, `evaluation`, `deployment`
+`pipeline_loader.py` validates the required top-level keys, the enum values,
+the stage names, and that `configs` contains all required sub-keys:
+`preprocessing`, `training`, `evaluation`, `deployment`, `promotion`, `drift`.
 
 ---
 
-### `preprocessing.yaml`
+## Sub-configs
 
-Global preprocessing constraints applied on every pipeline run.
+Referenced from a pipeline config's `configs` block. Most have per-task
+variants; the loader reads whichever path the pipeline config points to.
 
-| Key                | Type    | Description                                              |
-|--------------------|---------|----------------------------------------------------------|
-| `fail_on_nulls`    | bool    | Hard-fail if any feature column contains nulls           |
-| `min_rows`         | int     | Minimum rows required in each split                      |
-| `validate_types`   | bool    | Enforce that column dtypes match the declared schema     |
-| `validate_labels`  | bool    | Verify target column only contains declared label values |
+### Preprocessing (`preprocessing_tabular.yaml`, `preprocessing_image.yaml`, `preprocessing_cifar10.yaml`, `preprocessing_raw_image.yaml`)
 
-Per-dataset overrides (`label_classes`, `max_null_fraction`) live in
+Controls data-contract enforcement and the transform policy. Tabular contract
+keys:
+
+| Key                | Type | Description                                              |
+|--------------------|------|----------------------------------------------------------|
+| `fail_on_nulls`    | bool | Hard-fail if a feature column contains nulls when `missing_values.policy=fail` |
+| `min_rows`         | int  | Minimum rows required in each split                      |
+| `validate_types`   | bool | Enforce that column dtypes match the declared schema     |
+| `validate_labels`  | bool | Verify the target column only contains declared labels   |
+| `validate_on_skip` | bool | Re-validate splits on a cache hit (slower, used in CI)   |
+
+It also controls encoding, scaling, and missing-value policy; image variants
+control resize/normalisation and (for raw images) the ISP pipeline stages.
+Per-dataset schema/constraints (`label_classes`, `max_null_fraction`) live in
 `data/raw/<dataset>/dataset.yaml` under the `constraints` key.
 
----
+### Training (`training_classification.yaml`, `training_regression.yaml`, `training_image_cnn.yaml`)
 
-### `training.yaml`
-
-Reserved for training-specific parameters.
-Used by the training module in later stages.
-
----
+Model algorithm, hyperparameters, and (for CNNs) architecture and fine-tuning
+settings.
 
 ### `evaluation.yaml`
 
-Reserved for evaluation-specific parameters.
-Used by evaluation logic in later stages.
+Classification and regression evaluation parameters.
 
----
+### `promotion.yaml`
+
+Declarative promotion rules (metric thresholds and operators) and the
+`promotion_evaluation_split` setting (`val` / `test` / `both`).
 
 ### `deployment.yaml`
 
-Reserved for deployment-specific parameters.
-Used by deployment and serving components in later stages.
+Prediction-service settings: server host/port, model serving stage, healthcheck,
+and the optional reload endpoint.
 
+### `drift.yaml`
+
+Drift-monitoring configuration: statistical tests, thresholds, and severity
+bands shared by the tabular and image drift workflows.

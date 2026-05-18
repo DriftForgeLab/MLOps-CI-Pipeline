@@ -9,6 +9,7 @@ from src.pipeline.steps import (
     execute_stage,
     StageResult,
     _STAGE_REGISTRY,
+    _deployment_stage,
     _evaluation_stage,
     _model_analysis_stage,
     _promotion_stage,
@@ -188,6 +189,12 @@ class TestPromotionStage:
         config.task_type = "classification"
         return config
 
+    def _promo_config(self, split: str = "val") -> MagicMock:
+        """A stand-in PromotionConfig with a chosen promotion_evaluation_split."""
+        pc = MagicMock()
+        pc.promotion_evaluation_split = split
+        return pc
+
     def test_promotion_passes_with_no_violations(self, tmp_path: Path):
         """Promotion proceeds when all rules pass."""
         output_dir = tmp_path / "outputs"
@@ -198,7 +205,7 @@ class TestPromotionStage:
         approval_result.approved = True
 
         with (
-            patch("src.pipeline.steps.load_promotion_config", return_value=MagicMock()),
+            patch("src.pipeline.steps.load_promotion_config", return_value=self._promo_config("val")),
             patch("src.pipeline.steps.run_promotion_rules", return_value=[]),
             patch("src.pipeline.steps.request_approval", return_value=approval_result) as mock_approval,
             patch("src.pipeline.steps.mlflow") as mock_mlflow,
@@ -218,6 +225,10 @@ class TestPromotionStage:
         _, kwargs = mock_approval.call_args
         assert kwargs.get("drift") is None
 
+        with open(output_dir / "promotion_decision.json") as f:
+            decision = json.load(f)
+        assert decision["evaluation_split"] == "val"
+
     def test_promotion_blocked_by_metric_violation(self, tmp_path: Path):
         """A failing promotion rule raises PromotionBlockedError."""
         from src.pipeline.steps import PromotionBlockedError
@@ -235,7 +246,7 @@ class TestPromotionStage:
         }
 
         with (
-            patch("src.pipeline.steps.load_promotion_config", return_value=MagicMock()),
+            patch("src.pipeline.steps.load_promotion_config", return_value=self._promo_config("val")),
             patch("src.pipeline.steps.run_promotion_rules", return_value=[violation]),
         ):
             with pytest.raises(PromotionBlockedError, match="min_accuracy"):
@@ -251,7 +262,7 @@ class TestPromotionStage:
         approval_result.approved = True
 
         with (
-            patch("src.pipeline.steps.load_promotion_config", return_value=MagicMock()),
+            patch("src.pipeline.steps.load_promotion_config", return_value=self._promo_config("val")),
             patch("src.pipeline.steps.run_promotion_rules", return_value=[]),
             patch("src.pipeline.steps.request_approval", return_value=approval_result),
             patch("src.pipeline.steps.mlflow") as mock_mlflow,
@@ -268,6 +279,100 @@ class TestPromotionStage:
                 _promotion_stage(config, VERSION_ID)
 
         assert not (output_dir / "drift_result.json").exists()
+
+    def test_promotion_uses_test_split_metrics_when_configured(self, tmp_path: Path):
+        """promotion_evaluation_split='test' gates on official_test_report metrics."""
+        output_dir = tmp_path / "outputs"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        test_metrics = {"accuracy": 0.91, "f1_score": 0.89}
+        report = {
+            "metrics": {"accuracy": 0.95, "f1_score": 0.90},
+            "comparison": {"overall_verdict": "no_baseline", "has_production_model": False},
+            "official_test_report": {"split": "test", "metrics": test_metrics},
+        }
+        with open(output_dir / "evaluation_report.json", "w") as f:
+            json.dump(report, f)
+        config = self._mock_config(tmp_path)
+
+        approval_result = MagicMock()
+        approval_result.approved = True
+
+        with (
+            patch("src.pipeline.steps.load_promotion_config", return_value=self._promo_config("test")),
+            patch("src.pipeline.steps.run_promotion_rules", return_value=[]) as mock_rules,
+            patch("src.pipeline.steps.request_approval", return_value=approval_result),
+            patch("src.pipeline.steps.mlflow") as mock_mlflow,
+            patch("src.pipeline.steps.log_promotion_decision_to_mlflow"),
+        ):
+            mock_mlflow.active_run.return_value = MagicMock(info=MagicMock(run_id="run1"))
+            with patch("src.registry.model_registry.register_approved_model") as mock_reg, \
+                 patch("src.registry.model_registry.promote_to_production"), \
+                 patch("src.registry.model_registry.build_lineage_tags", return_value={}), \
+                 patch("src.registry.model_registry.write_lineage_tags"), \
+                 patch("src.registry.model_registry.get_mlflow_client") as mock_client:
+                mock_reg.return_value = MagicMock(version="1")
+                mock_client.return_value.get_run.return_value = MagicMock()
+                _promotion_stage(config, VERSION_ID)
+
+        # run_promotion_rules must have been called with the TEST metrics, not val.
+        assert mock_rules.call_count == 1
+        assert mock_rules.call_args[0][0] == test_metrics
+        with open(output_dir / "promotion_decision.json") as f:
+            assert json.load(f)["evaluation_split"] == "test"
+
+    def test_promotion_test_split_missing_raises(self, tmp_path: Path):
+        """promotion_evaluation_split='test' with no test report fails loudly."""
+        output_dir = tmp_path / "outputs"
+        self._setup_eval_report(output_dir)  # no official_test_report
+        config = self._mock_config(tmp_path)
+
+        with (
+            patch("src.pipeline.steps.load_promotion_config", return_value=self._promo_config("test")),
+            patch("src.pipeline.steps.run_promotion_rules", return_value=[]),
+        ):
+            with pytest.raises(RuntimeError, match="test-split report"):
+                _promotion_stage(config, VERSION_ID)
+
+    def test_promotion_both_blocks_when_test_violates(self, tmp_path: Path):
+        """promotion_evaluation_split='both' blocks if the test split violates a rule."""
+        from src.pipeline.steps import PromotionBlockedError
+        output_dir = tmp_path / "outputs"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        report = {
+            "metrics": {"accuracy": 0.95, "f1_score": 0.90},
+            "comparison": {"overall_verdict": "no_baseline", "has_production_model": False},
+            "official_test_report": {"split": "test", "metrics": {"accuracy": 0.5, "f1_score": 0.4}},
+        }
+        with open(output_dir / "evaluation_report.json", "w") as f:
+            json.dump(report, f)
+        config = self._mock_config(tmp_path)
+
+        violation = {
+            "rule_id": "min_accuracy", "metric": "accuracy", "observed": 0.5,
+            "operator": ">=", "threshold": 0.8, "description": "Accuracy too low",
+        }
+
+        # Clean on val, violating on test.
+        def _rules(metrics, task_type, promotion_config):
+            return [] if metrics["accuracy"] > 0.8 else [violation]
+
+        with (
+            patch("src.pipeline.steps.load_promotion_config", return_value=self._promo_config("both")),
+            patch("src.pipeline.steps.run_promotion_rules", side_effect=_rules),
+        ):
+            with pytest.raises(PromotionBlockedError, match=r"test:min_accuracy"):
+                _promotion_stage(config, VERSION_ID)
+
+
+# ── deployment stage registered ─────────────────────────────────────────────
+
+class TestDeploymentStageRegistered:
+    def test_deployment_in_registry(self):
+        assert _STAGE_REGISTRY["deployment"] is _deployment_stage
+
+    def test_registry_order_deployment_after_promotion(self):
+        keys = list(_STAGE_REGISTRY.keys())
+        assert keys.index("promotion") < keys.index("deployment")
 
 
 class TestEvaluationStage:

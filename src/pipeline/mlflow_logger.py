@@ -1,3 +1,22 @@
+# =============================================================================
+# src/pipeline/mlflow_logger.py — MLflow logging helpers
+# =============================================================================
+# Responsibility: Centralise every MLflow write so the orchestrator and the
+# individual stages do not each re-implement tracking calls.
+#
+# MLflow is the system of record for this project: it stores run parameters,
+# metrics, artifacts, lineage tags, and the model registry. Key helpers:
+#   configure_mlflow()      — resolve the tracking URI, select the experiment,
+#                             and start the single pipeline-level run that all
+#                             stages log into.
+#   log_training_* / etc.   — record each stage's outputs as params, metrics,
+#                             and artifacts.
+#
+# The helpers are intentionally fault-tolerant: a failure to reach MLflow is
+# logged but never aborts the pipeline, because experiment tracking is
+# observability, not a correctness requirement of the run itself.
+# =============================================================================
+
 import json
 import logging
 import os

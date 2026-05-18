@@ -1,3 +1,19 @@
+# =============================================================================
+# src/config/pipeline_image_raw.yaml — Raw DNG image classification pipeline config
+# =============================================================================
+# Trains a PyTorch CNN on raw DNG sensor images. Each image is first processed
+# through the deterministic seven-stage ISP pipeline (black-level correction →
+# demosaicing → white balance → colour correction → denoising → sharpening →
+# gamma) before resize/normalise. For standard JPG/PNG inputs, use
+# pipeline_image_cnn.yaml instead.
+#
+# Usage:
+#   run-pipeline --config src/config/pipeline_image_raw.yaml
+#
+# Stages: preprocessing → training → evaluation → model_analysis → promotion → deployment
+# Preprocessing: src/config/preprocessing_raw_image.yaml (ISP + resize + normalise).
+# =============================================================================
+
 project:
   name: "lightweight-mlops-pipeline"
   version: "0.1.0"
@@ -9,6 +25,7 @@ pipeline_stages:
   - "evaluation"
   - "model_analysis"
   - "promotion"
+  - "deployment"
 output_dir: "outputs"
 
 dataset: drone_raw  # change to any raw DNG dataset name under data/raw/

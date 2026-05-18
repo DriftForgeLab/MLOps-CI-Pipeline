@@ -24,15 +24,16 @@ from src.config.schema import IMAGE_TASK_TYPES
 
 logger = logging.getLogger(__name__)
 
-### !!! IMPORTANT: May need to change where it writes the split metadata back to -
-# currently it updates dataset.yaml in place, but it might be better to write a separate split.yaml
+# Split metadata (the resulting split ratios and per-split row counts) is
+# written back into the versioned dataset.yaml in place, so the dataset
+# descriptor and its split are kept together in a single file.
 
 def _validate_split_ratios(train_ratio: float, val_ratio: float) -> float:
     """
     Validate split ratios and return computed test_ratio.
     
     Enforces:
-+       - 0 < train_ratio < 1
+        - 0 < train_ratio < 1
         - 0 <= val_ratio < 1
         - train_ratio + val_ratio < 1  (so test_ratio > 0)
 

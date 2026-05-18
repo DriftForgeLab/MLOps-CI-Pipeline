@@ -6,12 +6,16 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import os
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse
 import numpy as np
 
 from src.deployment.schemas import ModelListItem, PredictionResponse
+from src.deployment.startup_checks import load_all_production_models
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -382,6 +386,61 @@ def predict(request: Request, model_name: str, body: dict) -> PredictionResponse
     if model_info.image_shape is not None:
         return _predict_image(model_info, body)
     return _predict_tabular(model_info, body)
+
+
+# ---------------------------------------------------------------------------
+# Admin: hot model reload
+# ---------------------------------------------------------------------------
+
+@router.post("/admin/reload")
+async def admin_reload(request: Request):
+    """Rebuild the loaded-model set from the registry — no process restart.
+
+    Re-runs ``load_all_production_models`` and atomically swaps the result in,
+    so in-flight ``/predict`` requests never observe a half-loaded state.
+
+    Auth (optional): when the ``API_ADMIN_TOKEN`` env var is set, callers must
+    send a matching ``X-Admin-Token`` header. When it is unset, the endpoint is
+    open. On any load failure the previously loaded models stay live.
+    """
+    state = request.app.state.model_state
+
+    token = os.environ.get("API_ADMIN_TOKEN")
+    if token and request.headers.get("X-Admin-Token") != token:
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Invalid or missing admin token."},
+        )
+
+    async with state["reload_lock"]:
+        try:
+            new_models = await run_in_threadpool(
+                load_all_production_models,
+                state["config"],
+                state["deploy_config"],
+            )
+        except Exception as exc:  # keep the old models live — never crash
+            logger.error("Model reload failed: %s", exc)
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "reload_failed",
+                    "detail": str(exc),
+                    "models_loaded": len(state.get("models", {})),
+                },
+            )
+        state["models"] = new_models  # atomic swap — single reference reassign
+
+    logger.info("Model reload complete — %d model(s) loaded.", len(new_models))
+    return {
+        "status": "reloaded",
+        "models_loaded": len(new_models),
+        "models": [
+            {"name": info.model_name, "version": info.model_version}
+            for info in new_models.values()
+        ],
+        "reloaded_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 # ---------------------------------------------------------------------------

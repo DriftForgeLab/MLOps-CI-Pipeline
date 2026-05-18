@@ -15,7 +15,7 @@ Tabular regression dataset. `data.csv` is tracked in git.
 - **No missing values, no categorical features** — preprocessing is column-selection + optional scaling only
 - **Pipeline config:** `src/config/pipeline_tabular_regression.yaml`
 - **Expected RF performance (val split):** R² ≈ 0.81, MAE ≈ 0.38, RMSE ≈ 0.52
-- **Promotion gates:** R² ≥ 0.75 and MAE ≤ 0.55 (configured in `src/config/promotion.yaml`)
+- **Promotion gates:** R² ≥ 0.80 and MAE ≤ 0.40 (configured in `src/config/promotion.yaml`)
 
 To regenerate `data.csv` from scratch:
 ```python
@@ -35,24 +35,29 @@ Images are tracked in git (small files).
 Imported CIFAR-10 dataset converted into the pipeline's ImageFolder PNG layout.
 
 - Source: https://www.cs.toronto.edu/~kriz/cifar.html
-- Import command: `python scripts/import_cifar10.py`
 - Pipeline config: `src/config/pipeline_cifar10.yaml`
 
-The generated PNG files are not tracked in git. The importer writes
-`data/raw/cifar10/images/<class>/*.png` plus `data/raw/cifar10/dataset.yaml`.
+CIFAR-10 is consumed in the standard ImageFolder layout
+(`data/raw/cifar10/images/<class>/*.png` plus `data/raw/cifar10/dataset.yaml`).
+The conversion from the original CIFAR-10 archive into this layout was performed
+with a separate import script that is **not included in this repository**. To
+use this dataset, recreate that layout yourself — for example by downloading
+CIFAR-10 via `torchvision` and writing one PNG per image into the per-class
+folders. The generated PNG files are not tracked in git.
 
-### drone_raw (`data/raw/drone_raw/`)
-Raw DNG aerial drone images used to demonstrate the ISP preprocessing pipeline.
+### fivek (`data/raw/fivek/`)
+Raw DNG photographs from the MIT-Adobe FiveK dataset, used to demonstrate the
+ISP preprocessing pipeline on raw images.
 
-- Code reference: [raw2logit](https://github.com/aiaudit-org/raw2logit)
-- Image source: [Zenodo record 5235536](https://zenodo.org/records/5235536)
+- Image source: [MIT-Adobe FiveK Dataset](https://data.csail.mit.edu/graphics/fivek/)
+- Pipeline config: `src/config/pipeline_fivek.yaml`
 
 **Images are NOT tracked in git** because raw DNG files are large.
 
-This dataset is included as a **small reproducible subset** for verifying that the raw image pipeline works end-to-end:
-raw DNG → ISP preprocessing → train/val/test split → CNN pipeline.
-
-The 12-image subset is **not intended for meaningful model training, robust evaluation, or realistic drift analysis**. It is only intended as a lightweight technical demonstration. For actual use, provide a larger raw dataset using the same folder structure described below.
+The pipeline consumes FiveK as a raw-image classification dataset, end-to-end:
+raw DNG → ISP preprocessing → train/val/test split → CNN pipeline. FiveK is
+published as an image-enhancement dataset rather than a labelled classification
+dataset, so the class labels come from how you sort the photos into subfolders.
 
 **Folder structure for any raw DNG dataset:**
 ```
@@ -62,17 +67,17 @@ data/raw/<dataset_name>/images/
 ```
 Subdirectory names become the class labels. Minimum 5 images per class is required.
 
-**To reproduce the demo subset (12 images from Zenodo):**
-1. Download from [Zenodo record 5235536](https://zenodo.org/records/5235536):
-   - scene_a (6 files): `DJI_0001.DNG`, `DJI_0003.DNG`, `DJI_0004.DNG`, `DJI_0005.DNG`, `DJI_0009.DNG`, `DJI_0010.DNG`
-   - scene_b (6 files): `DJI_0011.DNG`, `DJI_0013.DNG`, `DJI_0020.DNG`, `DJI_0025.DNG`, `DJI_0027.DNG`, `DJI_0029.DNG`
-2. Place each group in the corresponding subfolder:
+**To reproduce:**
+1. Download the raw DNG files from the
+   [MIT-Adobe FiveK Dataset](https://data.csail.mit.edu/graphics/fivek/).
+2. Sort a subset of the photos into per-class subfolders under
+   `data/raw/fivek/images/`:
 ```
-data/raw/drone_raw/images/
-    scene_a/    ← 6 files from step 1 (scene_a)
-    scene_b/    ← 6 files from step 1 (scene_b)
+data/raw/fivek/images/
+    <class_a>/    ← DNG images for class A
+    <class_b>/    ← DNG images for class B
 ```
-3. Run: `run-pipeline --config src/config/pipeline_image_raw.yaml`
+3. Run: `run-pipeline --config src/config/pipeline_fivek.yaml`
 
 Note: Larger raw datasets are supported, but they require more storage, preprocessing time, and compute. In practice, large raw-image runs are better suited to local execution than routine execution in GitHub Actions.
 
@@ -91,7 +96,7 @@ data/raw/<dataset_name>/
     dataset.yaml          ← tracked in git
     images/
         <class_name>/
-            image1.jpg    ← Not tracket
+            image1.jpg    ← not tracked in git
 ```
 
 ## Adding a New Tabular Dataset

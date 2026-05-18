@@ -5,6 +5,12 @@
 # All rules are evaluated deterministically — any violation hard-fails the pipeline.
 # =============================================================================
 
+# Which evaluation split the promotion gates are checked against:
+#   val  — validation-split metrics (default; preserves historic behaviour)
+#   test — held-out test-split metrics (requires a populated test/ split)
+#   both — block promotion if either split violates a rule
+promotion_evaluation_split: "val"
+
 classification:
   rules:
     - id: "min_accuracy"

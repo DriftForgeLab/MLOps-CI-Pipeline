@@ -9,6 +9,7 @@ pipeline_stages:
   - "evaluation"
   - "model_analysis"
   - "promotion"
+  - "deployment"
 output_dir: "outputs"
 
 dataset: fivek  

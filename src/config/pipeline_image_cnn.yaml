@@ -1,3 +1,16 @@
+# =============================================================================
+# src/config/pipeline_image_cnn.yaml — Standard image classification pipeline config
+# =============================================================================
+# Trains a PyTorch CNN on standard JPG/PNG images (no raw-sensor processing).
+# For raw DNG inputs that need the ISP pipeline, use pipeline_image_raw.yaml.
+#
+# Usage:
+#   run-pipeline --config src/config/pipeline_image_cnn.yaml
+#
+# Stages: preprocessing → training → evaluation → model_analysis → promotion → deployment
+# Preprocessing: src/config/preprocessing_image.yaml (resize + normalise).
+# =============================================================================
+
 project:
   name: "lightweight-mlops-pipeline"
   version: "0.1.0"
@@ -9,6 +22,7 @@ pipeline_stages:
   - "evaluation"
   - "model_analysis"
   - "promotion"
+  - "deployment"
 output_dir: "outputs"
 
 dataset: sample_images  # change to any JPG/PNG image dataset name under data/raw/

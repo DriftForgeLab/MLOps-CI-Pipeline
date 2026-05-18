@@ -27,6 +27,14 @@ class TestComputeVersionId:
         assert len(vid) == 12
         assert all(c in "0123456789abcdef" for c in vid)
 
+    def test_crlf_and_lf_produce_same_hash(self, tmp_path):
+        """Line endings must not affect the version ID (cross-platform repro)."""
+        lf = tmp_path / "lf.csv"
+        crlf = tmp_path / "crlf.csv"
+        lf.write_bytes(b"a,b\n1,2\n3,4\n")
+        crlf.write_bytes(b"a,b\r\n1,2\r\n3,4\r\n")
+        assert _compute_version_id(lf) == _compute_version_id(crlf)
+
 
 # ── create_dataset_version (tabular) ─────────────────────────────────────────
 

@@ -13,8 +13,8 @@
 #
 # Closing this gap would require a shared MLflow backend (S3 + RDS or
 # equivalent) and a `promote-from-run` CLI on top of it. Both fall outside
-# the bachelor-thesis scope — see §9.3 / future-work in
-# MLOPS_CI_PIPELINE_OVERVIEW.md for the rationale.
+# the bachelor-thesis scope — see the "Known limitations" section of the
+# root README.md for the rationale.
 # =============================================================================
 
 name: CI Pipeline
@@ -47,11 +47,21 @@ jobs:
       - name: Print run report
         run: cat outputs/run_report.json
 
-      - name: Upload run report
+      # Preserve debugging-grade artifacts on every run (including failures):
+      # the run report, evaluation/promotion/deployment outputs, trained model
+      # artifacts, and the MLflow tracking store. data/processed/ is excluded —
+      # it is regenerable from the dataset version hash and unbounded in size
+      # for image datasets.
+      - name: Upload pipeline artifacts
         uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: run-report
-          path: outputs/run_report.json
+          name: pipeline-artifacts-${{ github.sha }}
+          path: |
+            outputs/
+            artifacts/runs/
+            mlruns/
+          if-no-files-found: warn
 
       - name: Build Docker image
         run: docker build -f docker/Dockerfile -t mlops-prediction-api:ci-${{ github.sha }} .

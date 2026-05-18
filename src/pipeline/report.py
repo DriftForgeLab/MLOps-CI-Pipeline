@@ -3,7 +3,7 @@
 # =============================================================================
 # Responsibility: Build and write the run_report.json artifact that captures
 # what happened during a pipeline execution. This is the primary traceability
-# artifact for Sprint 1 and will be extended in later sprints.
+# artifact for a pipeline run.
 #
 # This module is separate from run_pipeline.py because report generation is
 # a distinct concern that will grow (MLflow integration, drift results,

@@ -22,7 +22,9 @@ from src.config.schema import CLASSIFICATION_TASK_TYPES, IMAGE_TASK_TYPES, VALID
 
 logger = logging.getLogger(__name__)
 
-### !!! IMPORTANT: This file needs to be updated later, it needs stronger validation
+# TODO: The current checks cover structure and a basic data contract. Stronger
+# validation (e.g. value-range bounds, cross-column consistency, duplicate-row
+# detection) would catch more data-quality issues before training.
 
 _ALLOWED_SCHEMA_TYPES: set[str] = {"float", "int", "string", "bool"}
 _ALLOWED_CONSTRAINT_KEYS: set[str] = {"min_rows", "max_null_fraction", "label_classes"}
@@ -68,7 +70,11 @@ def _is_dtype_compatible(series: pd.Series, declared_type: str) -> bool:
         return pd.api.types.is_bool_dtype(series)
     elif declared_type == "string":
         return pd.api.types.is_string_dtype(series) or pd.api.types.is_object_dtype(series)
-    return True  ### unknown declared type, may need to make this stricter later
+    # Unrecognised declared type: accept it rather than block the pipeline.
+    # The set of supported types is _ALLOWED_SCHEMA_TYPES, which is validated
+    # separately; this fallback only guards against schema entries that slip
+    # through, and is deliberately permissive.
+    return True
 def validate_dataset(dataset_name: str, version_id: str, processed_dir: Path = Path("data/processed")) -> None:
     """Validates that the specified dataset version has the required files and that
 

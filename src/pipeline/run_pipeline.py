@@ -4,23 +4,24 @@
 # This is the single point of entry for the entire MLOps pipeline.
 # It is registered as a CLI command via [project.scripts] in pyproject.toml.
 #
-# Responsibility: Parse CLI arguments, load config, and orchestrate pipeline
-# stages. This file should remain THIN — it coordinates, it does not contain
-# business logic. All actual work is delegated to other modules.
-#
-# Sprint 1 scope: Parse args, load config, confirm success, exit cleanly.
-# Later sprints will add actual pipeline steps (training, evaluation, etc.)
+# Responsibility: parse CLI arguments, load config, dispatch each registered
+# stage in order, and write a run report on exit. This file stays thin — it
+# coordinates, it does not contain business logic. The actual work is done in
+# other modules.
 # =============================================================================
 
 import argparse
+import os
 import sys
 import logging
 import uuid
 import yaml
+from urllib.request import Request, urlopen
 
 import mlflow
 from pathlib import Path
-from src.config.loader import load_config
+from src.config.loader import load_config, load_deployment_config
+from src.config.schema import DeploymentConfig
 from src.pipeline.steps import execute_stage, StageResult, run_drift_adaptation_eval
 from src.pipeline.report import compute_config_hash, build_run_report, write_run_report
 from src.pipeline.mlflow_logger import configure_mlflow, log_isp_scenario_artifacts
@@ -70,6 +71,30 @@ def _setup_logging(level_name: str) -> None:
         format = "%(asctime)s %(levelname)-8s %(name)s %(message)s",
         datefmt = "%Y-%m-%d %H:%M:%S", 
     )
+
+def trigger_api_reload(deploy_config: DeploymentConfig) -> None:
+    """Opt-in: ping a running prediction API so it reloads its models.
+
+    No-op unless ``deployment.yaml`` sets ``reload.enabled: true``. The HTTP
+    call is fully CI-safe — any failure (API down, timeout, bad response) is
+    logged and swallowed so it can never fail a pipeline run.
+    """
+    reload_cfg = deploy_config.reload
+    if not reload_cfg.enabled:
+        return
+
+    headers = {}
+    token = os.environ.get("API_ADMIN_TOKEN")
+    if token:
+        headers["X-Admin-Token"] = token
+
+    req = Request(reload_cfg.url, data=b"", method="POST", headers=headers)
+    try:
+        with urlopen(req, timeout=reload_cfg.timeout_seconds) as resp:
+            logger.info("API reload triggered at %s (HTTP %s)", reload_cfg.url, resp.status)
+    except Exception as exc:  # CI-safe: never fail the run over a reload ping
+        logger.warning("API reload trigger skipped — %s unreachable: %s", reload_cfg.url, exc)
+
 
 def main() -> None:
     _setup_logging("INFO")
@@ -209,6 +234,21 @@ def main() -> None:
         _drift_eval_done = Path(config.output_dir) / "drift_adaptation_eval.json"
         if _drift_eval_done.exists():
             _drift_eval_done.unlink()
+
+        # Opt-in, CI-safe: ping a running API so it picks up the new model.
+        # Kept outside _deployment_stage to preserve that stage's
+        # side-effect-free / deterministic property.
+        deployment_ran = any(
+            r.stage == "deployment" and r.status == "completed"
+            for r in stage_results
+        )
+        if deployment_ran:
+            try:
+                deploy_cfg = load_deployment_config(Path(config.configs.deployment))
+            except Exception as exc:
+                logger.warning("Could not load deployment config for reload trigger: %s", exc)
+                deploy_cfg = DeploymentConfig()
+            trigger_api_reload(deploy_cfg)
 
     if overall_status == "blocked":
         blocked_result = next(r for r in stage_results if r.status == "blocked")

@@ -35,6 +35,9 @@ dependencies = [
 # Linux. The Docker image deliberately omits this extra and stays CPU-only.
 directml = ["torch-directml>=0.2,<1.0"]
 
+# Console entry points installed by `pip install -e .`. Each name becomes a
+# command on PATH that calls the referenced module's main(). See README.md for
+# usage of each command.
 [project.scripts]
 run-pipeline         = "src.pipeline.run_pipeline:main"
 rollback-model       = "src.registry.rollback:main"
