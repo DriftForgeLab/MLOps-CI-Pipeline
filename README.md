@@ -111,8 +111,7 @@ always run; the configurable stages are listed in each pipeline config under
 Drift detection — comparing the training reference against new production data
 over time — runs separately via the monitoring CLIs after real batches arrive.
 
-See [docs/architecture.md](docs/architecture.md) for the layered design and
-[docs/decisions.md](docs/decisions.md) for the rationale behind key choices.
+See [docs/architecture.md](docs/architecture.md) for the layered design.
 
 ## Repository structure
 
@@ -478,12 +477,10 @@ Most of these directories are generated and excluded from version control via
 | Document                                           | Topic                                                  |
 | -------------------------------------------------- | ------------------------------------------------------ |
 | [docs/architecture.md](docs/architecture.md)       | Layered architecture and stage-registry orchestration. |
-| [docs/decisions.md](docs/decisions.md)             | Rationale behind key design choices.                   |
 | [docs/deployment.md](docs/deployment.md)           | Serving, Docker, and environment variables.            |
 | [docs/drift-detection.md](docs/drift-detection.md) | Full drift-monitoring and retraining workflow.         |
 | [docs/evaluation_plan.md](docs/evaluation_plan.md) | Evaluation methodology and metrics.                    |
 | [docs/image_datasets.md](docs/image_datasets.md)   | Adding and structuring image datasets.                 |
-| [docs/threat_model.md](docs/threat_model.md)       | Security considerations for the service.               |
 | [data/raw/README.md](data/raw/README.md)           | Adding new tabular and image datasets.                 |
 
 ## Thesis evaluation summary
