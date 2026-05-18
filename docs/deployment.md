@@ -208,10 +208,15 @@ docker run --rm \
 
 ## CI/CD
 
-The GitHub Actions workflow (`.github/workflows/ci-pipeline.yml`) includes:
+The GitHub Actions workflow (`.github/workflows/ci-pipeline.yml`) runs:
 
-1. **Docker build** — builds the image to verify the Dockerfile is valid.
-2. **Import check** — runs the container briefly to verify Python imports.
+1. **Tests** — `pytest tests/`.
+2. **Pipeline run** — `run-pipeline` against `pipeline_tabular_classification_ci.yaml`,
+   a CI-specific config that omits the interactive `promotion` stage.
+3. **Artifact upload** — `outputs/`, `artifacts/runs/`, and `mlruns/` are uploaded
+   on every run, including failures.
+4. **Docker build** — builds the image to verify the Dockerfile is valid.
+5. **Import check** — runs the container briefly to verify Python imports.
 
 To trigger the CI workflow:
 - Go to the repository on GitHub.

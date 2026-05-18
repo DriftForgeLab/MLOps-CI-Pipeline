@@ -148,10 +148,12 @@ model:
         kernel_size: 3
       - out_channels: 64
         kernel_size: 3
-    fc_units: 128
+      - out_channels: 128
+        kernel_size: 3
+    fc_units: 256
     dropout: 0.3
   hyperparameters:
-    epochs: 10
+    epochs: 30
     batch_size: 32
     learning_rate: 0.001
 ```

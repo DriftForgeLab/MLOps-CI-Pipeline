@@ -16,32 +16,27 @@ training pipeline ──▶ model + reference artifacts ──┐
                                        monitor CLI on new batch ──▶ drift report
 ```
 
-The pipeline does **not** run a drift stage. 
-## Current Capability vs. Known Gaps
+The pipeline does **not** run a drift stage.
+
+## Current Capability
 
 What works today:
 
 - `monitor-drift` (tabular) and `monitor-drift-image` (image) compute drift
   against per-model reference data and write a timestamped JSON report.
-- Per-feature and overall severity classification (config-driven for tabular).
+- Per-feature and overall severity classification, config-driven for both
+  tabular (`drift.yaml`) and image (`drift.image.severity`) tasks.
 - Optional interactive decision prompt when run in a TTY.
+- In a non-interactive (CI/cron) run the CLI exits with code 2 when observed
+  severity reaches `monitoring.fail_on_severity` — a usable CI gate.
+- Every run logs the result to a separate, non-nested MLflow run and appends
+  an entry to a `history.jsonl` drift-history index.
 - The promotion stage reads the latest drift result (`load_latest_drift`) and
   passes it to the approval summary. The monitoring drift block is rendered as
   a fallback so the reviewer always sees a drift signal; it is suppressed only
   when a drift-adaptation eval block is shown (post-fine-tuning the raw drift
   label would mislead). When no drift history exists an explicit
   "no drift data" banner is rendered instead.
-
-Known gaps:
-
-- High severity in non-interactive (CI/cron) mode produces only a JSON file —
-  no exit code, no MLflow write-back, no alert.
-- Image severity thresholds are hard-coded in `src/drift/image_compute.py`
-  rather than in `drift.yaml`.
-- Drift history is a directory of timestamped JSON files; no index, no
-  MLflow trend.
-
-These are known gaps rather than bugs — closing them is planned for later phases.
 
 ## Source Layout
 
@@ -61,14 +56,16 @@ src/
 │   ├── monitor_cli.py       # `monitor-drift` CLI
 │   ├── image_drift_monitor.py  # monitor_image_batch()
 │   ├── image_monitor_cli.py # `monitor-drift-image` CLI
-│   ├── drift_decision.py    # Interactive decision prompt
+│   ├── drift_decision.py    # Interactive decision prompt + CI exit gate
+│   ├── history.py           # JSONL drift-history index
+│   ├── mlflow_sink.py       # Runtime-drift MLflow sink
+│   ├── monitor_summary_cli.py  # `monitor-summary` CLI
 │   └── reports.py           # JSON / HTML writers
 ├── pipeline/
 │   └── mlflow_logger.py     # log_drift_metrics_to_mlflow() — usable from
 │                            # within a pipeline run only
 └── promotion/
-    └── approval.py          # Drift block in approval summary (currently
-                             # always None — see gaps above)
+    └── approval.py          # Renders the drift block in the approval summary
 ```
 
 ## Tabular Drift Configuration
@@ -89,8 +86,9 @@ All tabular settings live in `src/config/drift.yaml`:
 | `feature_severity.high_below` | `0.001` | P-value below this is "high" per-feature severity |
 | `feature_severity.medium_below` | `0.01` | P-value below this is "medium" per-feature severity |
 | `monitoring.enabled` | `true` | Enable batch monitoring |
-| `monitoring.min_batch_size` | `30` | Skip analysis if batch has fewer rows |
+| `monitoring.min_batch_size` | `10` | Skip analysis if batch has fewer rows |
 | `monitoring.alert_severity` | `"medium"` | Log a warning when overall severity reaches this level |
+| `monitoring.fail_on_severity` | `"high"` | In non-interactive runs, exit with code 2 when severity reaches this level (`never` disables the gate) |
 
 Available statistical tests: `ks`, `chisquare`, `psi`, `wasserstein`, `jensenshannon`.
 
@@ -117,18 +115,22 @@ Based on the p-value from the statistical test:
 | p-value < `feature_severity.medium_below` (0.01) | **medium** |
 | Otherwise | **low** |
 
-### Image severity (today)
+### Image severity
 
-Image overall severity uses **hard-coded** defaults from
-`src/drift/image_compute.py`:
+Image overall severity thresholds are configured under `drift.image.severity`
+in `drift.yaml`:
 
-```python
-DEFAULT_IMAGE_SEVERITY_THRESHOLDS = {"medium": 0.10, "high": 0.25}
+```yaml
+image:
+  severity:
+    medium: 0.10
+    high: 0.25
 ```
 
-Per-channel Wasserstein distances are aggregated; overall score above 0.25 is
-"high", above 0.10 is "medium", else "low". Making these configurable in
-`drift.yaml` is scheduled (Phase 2 of the drift plan).
+Per-channel Wasserstein distances are aggregated; an overall score at or above
+`high` is "high", at or above `medium` is "medium", else "low". When a caller
+supplies no thresholds, `DEFAULT_IMAGE_SEVERITY_THRESHOLDS` in
+`src/drift/image_compute.py` provides the same values as a fallback default.
 
 ## Tabular Batch Monitoring
 
@@ -167,10 +169,12 @@ monitor-drift \
 5. If the batch is below `min_batch_size`, exits cleanly with no output.
 6. Prints a drift summary to stdout.
 7. Saves a timestamped JSON file: `<output-dir>/<YYYYMMDDTHHMMSSZ>.json`.
-8. Logs a warning if overall severity reaches `alert_severity` or above.
-9. In an interactive shell only, prompts for a drift decision.
+8. Logs the result to an MLflow runtime-drift run and appends a `history.jsonl` entry.
+9. Logs a warning if overall severity reaches `alert_severity` or above.
+10. In an interactive shell only, prompts for a drift decision.
 
-The CLI exits 0 regardless of severity. 
+In a non-interactive (non-TTY) run the CLI exits with code 2 when overall
+severity reaches `monitoring.fail_on_severity`; otherwise it exits 0.
 
 ## Image Batch Monitoring
 
@@ -188,7 +192,8 @@ monitor-drift-image \
   --drift-scenarios-dir data/drift_scenarios/
 ```
 
-Same exit-code caveat as the tabular CLI.
+Same exit-code behaviour as the tabular CLI: in a non-interactive run it exits
+with code 2 when severity reaches `monitoring.fail_on_severity`, else 0.
 
 ## Drift Result Schema (v1.0.0)
 
@@ -201,7 +206,7 @@ Both tabular and image monitors produce a JSON result with this shape:
   "generated_at": "2026-04-06T12:00:00Z",
   "pipeline_execution_id": "<version_id>",
   "dataset_version_id": "<version_id>",
-  "task_type": "unknown",
+  "task_type": "classification",
 
   "reference_dataset": {
     "source": "train",
@@ -247,8 +252,9 @@ Both tabular and image monitors produce a JSON result with this shape:
 }
 ```
 
-`task_type` is currently always `"unknown"` because the monitor CLIs do not
-plumb the pipeline's task type through. Tracked as Phase 6 of the drift plan.
+`task_type` is taken from the pipeline config's `task_type` and recorded on
+every result. It falls back to `"unknown"` only when `monitor_batch()` is
+called directly without the argument being passed.
 
 ## ISP Sensitivity vs. Drift (Disambiguation)
 
@@ -312,7 +318,7 @@ Configured in `src/config/training_image_cnn.yaml` under the `fine_tune:` block:
 
 | Parameter         | Default  | Description                                         |
 |-------------------|----------|-----------------------------------------------------|
-| `epochs`          | `5`      | Additional training epochs (fewer than full training)|
+| `epochs`          | `20`     | Additional training epochs (fewer than full training)|
 | `learning_rate`   | `0.0001` | Lower LR to avoid overwriting learned features      |
 | `freeze_backbone` | `false`  | If `true`, only the final classifier head is trained|
 
